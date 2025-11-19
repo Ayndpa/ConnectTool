@@ -58,6 +58,7 @@ public:
     // Message handler
     void startMessageHandler();
     void stopMessageHandler();
+    SteamMessageHandler* getMessageHandler() { return messageHandler_; }
 
     // Update user info (ping, relay status)
     void update();

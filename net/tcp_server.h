@@ -27,7 +27,6 @@ public:
     void sendToAll(const std::string& message, std::shared_ptr<tcp::socket> excludeSocket = nullptr);
     void sendToAll(const char* data, size_t size, std::shared_ptr<tcp::socket> excludeSocket = nullptr);
     int getClientCount();
-    MultiplexManager* getMultiplexManager() { return multiplexManager_.get(); }
 
 private:
     void start_accept();
@@ -42,5 +41,4 @@ private:
     std::mutex clientsMutex_;
     std::thread serverThread_;
     SteamNetworkingManager* manager_;
-    std::unique_ptr<MultiplexManager> multiplexManager_;
 };

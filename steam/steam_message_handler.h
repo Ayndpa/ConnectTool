@@ -19,6 +19,8 @@ public:
     void start();
     void stop();
 
+    std::shared_ptr<MultiplexManager> getMultiplexManager(HSteamNetConnection conn);
+
 private:
     void run();
     void pollMessages();
@@ -33,6 +35,7 @@ private:
     std::map<HSteamNetConnection, std::shared_ptr<MultiplexManager>> multiplexManagers_;
 
     std::thread thread_;
+    std::thread io_thread_;
     bool running_;
 };
 

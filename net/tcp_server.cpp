@@ -15,9 +15,6 @@ bool TCPServer::start() {
         acceptor_.bind(endpoint);
         acceptor_.listen();
 
-        multiplexManager_ = std::make_unique<MultiplexManager>(manager_->getInterface(), manager_->getConnection(),
-                                                                io_context_, manager_->getIsHost(), *manager_->getLocalPort());
-
         running_ = true;
         serverThread_ = std::thread([this]() { 
             std::cout << "Server thread started" << std::endl;
@@ -40,7 +37,6 @@ void TCPServer::stop() {
         serverThread_.join();
     }
     acceptor_.close();
-    multiplexManager_.reset();
 }
 
 void TCPServer::sendToAll(const std::string& message, std::shared_ptr<tcp::socket> excludeSocket) {
@@ -66,7 +62,8 @@ void TCPServer::start_accept() {
     acceptor_.async_accept(*socket, [this, socket](const boost::system::error_code& error) {
         if (!error) {
             std::cout << "New client connected" << std::endl;
-            std::string id = multiplexManager_->addClient(socket);
+            auto multiplexManager = manager_->getMessageHandler()->getMultiplexManager(manager_->getConnection());
+            std::string id = multiplexManager->addClient(socket);
             {
                 std::lock_guard<std::mutex> lock(clientsMutex_);
                 clients_.push_back(socket);
@@ -83,9 +80,9 @@ void TCPServer::start_read(std::shared_ptr<tcp::socket> socket, std::string id) 
     auto buffer = std::make_shared<std::vector<char>>(1024);
     socket->async_read_some(boost::asio::buffer(*buffer), [this, socket, buffer, id](const boost::system::error_code& error, std::size_t bytes_transferred) {
         if (!error) {
-            std::cout << "Received " << bytes_transferred << " bytes from TCP client " << id << std::endl;
             if (manager_->isConnected()) {
-                multiplexManager_->sendTunnelPacket(id, buffer->data(), bytes_transferred, 0);
+                auto multiplexManager = manager_->getMessageHandler()->getMultiplexManager(manager_->getConnection());
+                multiplexManager->sendTunnelPacket(id, buffer->data(), bytes_transferred, 0);
             } else {
                 std::cout << "Not connected to Steam, skipping forward" << std::endl;
             }
@@ -95,10 +92,11 @@ void TCPServer::start_read(std::shared_ptr<tcp::socket> socket, std::string id) 
             std::cout << "TCP client " << id << " disconnected or error: " << error.message() << std::endl;
             // Send disconnect packet
             if (manager_->isConnected()) {
-                multiplexManager_->sendTunnelPacket(id, nullptr, 0, 1);
+                auto multiplexManager = manager_->getMessageHandler()->getMultiplexManager(manager_->getConnection());
+                multiplexManager->sendTunnelPacket(id, nullptr, 0, 1);
+                // Remove client
+                multiplexManager->removeClient(id);
             }
-            // Remove client
-            multiplexManager_->removeClient(id);
             std::lock_guard<std::mutex> lock(clientsMutex_);
             clients_.erase(std::remove(clients_.begin(), clients_.end(), socket), clients_.end());
         }

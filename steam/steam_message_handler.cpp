@@ -17,14 +17,30 @@ void SteamMessageHandler::start() {
     if (running_) return;
     running_ = true;
     thread_ = std::thread([this]() { run(); });
+    // Start io_context in a separate thread
+    io_thread_ = std::thread([this]() {
+        auto work = boost::asio::make_work_guard(io_context_);
+        io_context_.run();
+    });
 }
 
 void SteamMessageHandler::stop() {
     if (!running_) return;
     running_ = false;
+    io_context_.stop();
     if (thread_.joinable()) {
         thread_.join();
     }
+    if (io_thread_.joinable()) {
+        io_thread_.join();
+    }
+}
+
+std::shared_ptr<MultiplexManager> SteamMessageHandler::getMultiplexManager(HSteamNetConnection conn) {
+    if (multiplexManagers_.find(conn) == multiplexManagers_.end()) {
+        multiplexManagers_[conn] = std::make_shared<MultiplexManager>(m_pInterface_, conn, io_context_, g_isHost_, localPort_);
+    }
+    return multiplexManagers_[conn];
 }
 
 void SteamMessageHandler::run() {
@@ -50,7 +66,6 @@ void SteamMessageHandler::pollMessages() {
         ISteamNetworkingMessage* pIncomingMsgs[10];
         int numMsgs = m_pInterface_->ReceiveMessagesOnConnection(conn, pIncomingMsgs, 10);
         for (int i = 0; i < numMsgs; ++i) {
-            std::cout << "Received message on connection " << conn << std::endl;
             ISteamNetworkingMessage* pIncomingMsg = pIncomingMsgs[i];
             const char* data = (const char*)pIncomingMsg->m_pData;
             size_t size = pIncomingMsg->m_cbSize;
