@@ -1,0 +1,27 @@
+name: C++ Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. 拉取代码
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # 2. 配置 CMake & 编译
+    - name: Configure CMake
+      run: cmake -S . -B build
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    # 3. 运行可执行文件（如果有 main）
+    - name: Run tests (optional)
+      run: ./build/你的可执行文件名 || echo "No executable found"
