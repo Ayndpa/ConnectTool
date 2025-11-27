@@ -1,0 +1,97 @@
+name: Build ConnectTool
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v1.14
+      with:
+        cmake-version: '3.18.x'
+
+    - name: Install dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libglfw3-dev libboost-system-dev
+
+    - name: Install dependencies (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew update
+        brew install glfw boost
+
+    - name: Download Steamworks SDK
+      run: |
+        mkdir -p steamworks
+        curl -L "https://partner.steamgames.com/downloads/steamworks_sdk_156.zip" -o steamworks_sdk.zip
+        unzip steamworks_sdk.zip -d steamworks
+        mv steamworks/sdk/* steamworks/
+        rm -rf steamworks/sdk steamworks_sdk.zip
+
+    - name: Configure CMake (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    - name: Configure CMake (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+    - name: Build (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        cd build
+        make -j4
+
+    - name: Build (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        cd build
+        cmake --build . --config Release --parallel 4
+
+    - name: Upload Build Artifacts (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ConnectTool-Linux
+        path: build/OnlineGameTool
+
+    - name: Upload Build Artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ConnectTool-Windows
+        path: build/Release/OnlineGameTool.exe
+
+    - name: Upload Build Artifacts (macOS)
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ConnectTool-macOS
+        path: build/OnlineGameTool
