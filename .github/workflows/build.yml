@@ -1,0 +1,162 @@
+name: Build ConnectTool
+
+on:
+  push:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - ".github/ISSUE_TEMPLATE/**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows-x64
+            steam_lib: steam_api64.dll
+            steam_lib_path: win64/steam_api64.dll
+            artifact_ext: .exe
+          - os: ubuntu-latest
+            name: Linux-x64
+            steam_lib: libsteam_api.so
+            steam_lib_path: linux64/libsteam_api.so
+            artifact_ext: ""
+          - os: macos-latest
+            name: macOS
+            steam_lib: libsteam_api.dylib
+            steam_lib_path: osx/libsteam_api.dylib
+            artifact_ext: ""
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            ~\AppData\Local\vcpkg\archives
+          key: vcpkg-windows-x64-static-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: vcpkg-windows-x64-static-
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          vcpkg integrate install
+          vcpkg install glfw3:x64-windows-static boost-asio:x64-windows-static
+        env:
+          VCPKG_ROOT: C:\vcpkg
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libglfw3-dev libboost-all-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install glfw boost
+
+      - name: Download Steamworks SDK
+        shell: bash
+        run: |
+          SDK_URL="${{ secrets.STEAMWORKS_SDK_URL }}"
+          if [ -z "$SDK_URL" ]; then echo "::error::STEAMWORKS_SDK_URL secret not set"; exit 1; fi
+          curl -fSLo steamworks_sdk.zip "$SDK_URL"
+          unzip -q steamworks_sdk.zip -d steamworks_temp
+          mkdir -p steamworks
+          if [ -d "steamworks_temp/sdk" ]; then cp -r steamworks_temp/sdk/* steamworks/; else cp -r steamworks_temp/* steamworks/; fi
+          rm -rf steamworks_sdk.zip steamworks_temp
+
+      - name: Verify Steamworks SDK
+        shell: bash
+        run: |
+          [ -d "steamworks/public/steam" ] || { echo "::error::Steamworks SDK headers not found"; exit 1; }
+          [ -f "steamworks/redistributable_bin/${{ matrix.steam_lib_path }}" ] || { echo "::error::${{ matrix.steam_lib }} not found"; exit 1; }
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }}
+
+      - name: Prepare artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts"
+          $buildDir = "build/${{ env.BUILD_TYPE }}"
+          if (Test-Path "$buildDir/ConnectTool.exe") { Copy-Item "$buildDir/ConnectTool.exe" -Destination "artifacts/" }
+          if (Test-Path "$buildDir/steam_api64.dll") { Copy-Item "$buildDir/steam_api64.dll" -Destination "artifacts/" }
+          if (Test-Path "$buildDir/steam_appid.txt") { Copy-Item "$buildDir/steam_appid.txt" -Destination "artifacts/" }
+          Copy-Item "C:\Windows\Fonts\msyh.ttc" -Destination "artifacts/font.ttf"
+
+      - name: Prepare artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y fonts-noto-cjk
+          mkdir -p artifacts
+          [ -f "build/ConnectTool" ] && cp build/ConnectTool artifacts/ && chmod +x artifacts/ConnectTool
+          [ -f "build/${{ matrix.steam_lib }}" ] && cp build/${{ matrix.steam_lib }} artifacts/
+          [ -f "build/steam_appid.txt" ] && cp build/steam_appid.txt artifacts/
+          cp /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc artifacts/font.ttf
+
+      - name: Prepare artifacts (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p artifacts
+          [ -f "build/ConnectTool" ] && cp build/ConnectTool artifacts/ && chmod +x artifacts/ConnectTool
+          [ -f "build/${{ matrix.steam_lib }}" ] && cp build/${{ matrix.steam_lib }} artifacts/
+          [ -f "build/steam_appid.txt" ] && cp build/steam_appid.txt artifacts/
+          curl -L "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" -o artifacts/font.ttf
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConnectTool-${{ matrix.name }}
+          path: artifacts/
+          retention-days: 30
+
+      - name: Create release archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          cd artifacts
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a -tzip ../ConnectTool-${{ matrix.name }}.zip *
+          else
+            zip -r ../ConnectTool-${{ matrix.name }}.zip *
+          fi
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ConnectTool-${{ matrix.name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
