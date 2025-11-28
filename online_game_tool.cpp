@@ -240,7 +240,7 @@ int main() {
   (void)io;
   // Load Chinese font
   io.Fonts->AddFontFromFileTTF(
-      "font.ttf", 18.0f, nullptr,
+      "NotoSansCJKsc-Regular.otf", 18.0f, nullptr,
       io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
   ImGui::StyleColorsDark();
 
