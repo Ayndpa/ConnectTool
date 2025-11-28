@@ -2,13 +2,12 @@ name: Build ConnectTool
 
 on:
   push:
-    branches:
-      - main
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - ".github/ISSUE_TEMPLATE/**"
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
