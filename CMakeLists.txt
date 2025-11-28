@@ -141,5 +141,5 @@ endif()
 
 # Create steam_id.txt file with content 480
 add_custom_command(TARGET ConnectTool POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "480" > $<TARGET_FILE_DIR:ConnectTool>/steam_id.txt
+    COMMAND ${CMAKE_COMMAND} -E echo "480" > $<TARGET_FILE_DIR:ConnectTool>/steam_appid.txt
 )
