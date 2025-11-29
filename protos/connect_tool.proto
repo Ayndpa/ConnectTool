@@ -15,8 +15,6 @@ service ConnectToolService {
   rpc InviteFriend (InviteFriendRequest) returns (InviteFriendResponse);
 
   // VPN Management
-  rpc StartVPN (StartVPNRequest) returns (StartVPNResponse);
-  rpc StopVPN (StopVPNRequest) returns (StopVPNResponse);
   rpc GetVPNStatus (GetVPNStatusRequest) returns (GetVPNStatusResponse);
   rpc GetVPNRoutingTable (GetVPNRoutingTableRequest) returns (GetVPNRoutingTableResponse);
 }
@@ -78,20 +76,6 @@ message InviteFriendResponse {
   bool success = 1;
 }
 
-message StartVPNRequest {
-  string ip = 1; // e.g., "10.0.0.0"
-  string mask = 2; // e.g., "255.255.255.0"
-}
-message StartVPNResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-message StopVPNRequest {}
-message StopVPNResponse {
-  bool success = 1;
-}
-
 message VPNStats {
   uint64 packets_sent = 1;
   uint64 bytes_sent = 2;
@@ -118,3 +102,4 @@ message GetVPNRoutingTableRequest {}
 message GetVPNRoutingTableResponse {
   repeated VPNRoute routes = 1;
 }
+

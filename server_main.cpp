@@ -31,10 +31,6 @@ using connecttool::GetFriendLobbiesRequest;
 using connecttool::GetFriendLobbiesResponse;
 using connecttool::InviteFriendRequest;
 using connecttool::InviteFriendResponse;
-using connecttool::StartVPNRequest;
-using connecttool::StartVPNResponse;
-using connecttool::StopVPNRequest;
-using connecttool::StopVPNResponse;
 using connecttool::GetVPNStatusRequest;
 using connecttool::GetVPNStatusResponse;
 using connecttool::GetVPNRoutingTableRequest;
@@ -113,21 +109,6 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         bool success = core_->inviteFriend(request->friend_steam_id());
         reply->set_success(success);
-        return Status::OK;
-    }
-
-    Status StartVPN(ServerContext* context, const StartVPNRequest* request, StartVPNResponse* reply) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        bool success = core_->startVPN(request->ip(), request->mask());
-        reply->set_success(success);
-        reply->set_message(success ? "VPN started" : "Failed to start VPN");
-        return Status::OK;
-    }
-
-    Status StopVPN(ServerContext* context, const StopVPNRequest* request, StopVPNResponse* reply) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        core_->stopVPN();
-        reply->set_success(true);
         return Status::OK;
     }
 

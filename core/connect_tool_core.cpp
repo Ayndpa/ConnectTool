@@ -33,8 +33,8 @@ bool ConnectToolCore::initSteam() {
 }
 
 void ConnectToolCore::shutdown() {
-    if (vpnEnabled) {
-        stopVPN();
+    if (vpnBridge) {
+        vpnBridge->stop();
     }
     if (steamManager) {
         steamManager->stopMessageHandler();
@@ -119,24 +119,8 @@ bool ConnectToolCore::inviteFriend(const std::string& friendSteamIdStr) {
     return false;
 }
 
-bool ConnectToolCore::startVPN(const std::string& ip, const std::string& mask) {
-    if (!vpnBridge) return false;
-    if (vpnBridge->start("", ip, mask)) {
-        vpnEnabled = true;
-        return true;
-    }
-    return false;
-}
-
-void ConnectToolCore::stopVPN() {
-    if (vpnBridge && vpnEnabled) {
-        vpnBridge->stop();
-        vpnEnabled = false;
-    }
-}
-
 bool ConnectToolCore::isVPNEnabled() const {
-    return vpnEnabled;
+    return vpnBridge && vpnBridge->isRunning();
 }
 
 std::string ConnectToolCore::getLocalVPNIP() const {
@@ -158,7 +142,6 @@ std::map<uint32_t, RouteEntry> ConnectToolCore::getVPNRoutingTable() const {
     if (vpnBridge) return vpnBridge->getRoutingTable();
     return {};
 }
-
 ConnectToolCore::MemberConnectionInfo ConnectToolCore::getMemberConnectionInfo(const CSteamID& memberID) {
     int ping = 0;
     std::string relayInfo = "-";

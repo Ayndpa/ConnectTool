@@ -31,9 +31,7 @@ public:
     std::vector<FriendLobbyInfo> getFriendLobbies();
     bool inviteFriend(const std::string& friendSteamIdStr);
 
-    // VPN
-    bool startVPN(const std::string& ip, const std::string& mask);
-    void stopVPN();
+    // VPN Monitoring
     bool isVPNEnabled() const;
     std::string getLocalVPNIP() const;
     std::string getTunDeviceName() const;
@@ -53,5 +51,4 @@ private:
     std::unique_ptr<SteamVpnBridge> vpnBridge;
 
     bool steamInitialized = false;
-    bool vpnEnabled = false;
 };

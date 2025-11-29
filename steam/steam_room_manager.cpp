@@ -1,5 +1,6 @@
 #include "steam_room_manager.h"
 #include "steam_networking_manager.h"
+#include "steam_vpn_bridge.h"
 #include <iostream>
 #include <string>
 #include <algorithm>
@@ -85,6 +86,12 @@ void SteamMatchmakingCallbacks::OnLobbyEntered(LobbyEnter_t *pCallback)
         // Set Rich Presence to enable invite functionality
         SteamFriends()->SetRichPresence("steam_display", "#Status_InLobby");
         SteamFriends()->SetRichPresence("connect", std::to_string(pCallback->m_ulSteamIDLobby).c_str());
+
+        // 【新增】自动启动VPN
+        if (manager_->getVpnBridge()) {
+            std::cout << "Auto-starting VPN with default settings (10.0.0.0/24)..." << std::endl;
+            manager_->getVpnBridge()->start("", "10.0.0.0", "255.255.255.0");
+        }
         
         // Connect to all existing members in the lobby (except ourselves)
         CSteamID mySteamID = SteamUser()->GetSteamID();
@@ -190,6 +197,12 @@ void SteamRoomManager::leaveLobby()
         {
             networkingManager_->getInterface()->CloseListenSocket(networkingManager_->getListenSock());
             networkingManager_->getListenSock() = k_HSteamListenSocket_Invalid;
+        }
+
+        // 【新增】自动关闭VPN
+        if (networkingManager_->getVpnBridge()) {
+            std::cout << "Auto-stopping VPN..." << std::endl;
+            networkingManager_->getVpnBridge()->stop();
         }
         
         // Clear Rich Presence when leaving lobby

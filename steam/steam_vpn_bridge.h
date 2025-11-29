@@ -32,10 +32,11 @@ struct RouteEntry {
  */
 enum class VpnMessageType : uint8_t {
     IP_PACKET = 1,          // IP数据包
-    IP_ASSIGNMENT = 2,      // IP地址分配
     ROUTE_UPDATE = 3,       // 路由表更新
     PING = 4,               // 心跳包
-    PONG = 5                // 心跳响应
+    PONG = 5,               // 心跳响应
+    IP_PROBE = 6,           // IP探测
+    IP_CONFLICT = 7         // IP冲突
 };
 
 /**
@@ -134,14 +135,7 @@ private:
     // TUN设备写入线程（处理发送队列）
     void tunWriteThread();
 
-    // 分配IP地址
-    uint32_t allocateIPAddress();
 
-    // 释放IP地址
-    void releaseIPAddress(uint32_t ipAddress);
-
-    // 发送IP分配消息
-    void sendIPAssignment(CSteamID steamID, HSteamNetConnection conn, uint32_t ipAddress);
 
     // 广播路由更新
     void broadcastRouteUpdate();
@@ -201,6 +195,34 @@ private:
     };
     std::vector<OutgoingPacket> sendQueue_;
     std::mutex sendQueueMutex_;
+
+    // IP协商相关
+    enum class IpNegotiationState {
+        IDLE,
+        NEGOTIATING,
+        STABLE
+    };
+    IpNegotiationState negotiationState_;
+    uint32_t candidateIP_;
+    std::chrono::steady_clock::time_point probeStartTime_;
+    
+    // 开始IP协商
+    void startIpNegotiation();
+    
+    // 检查IP协商超时
+    void checkIpNegotiationTimeout();
+    
+    // 处理IP探测
+    void handleIpProbe(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
+    
+    // 处理IP冲突
+    void handleIpConflict(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
+
+    // 查找下一个可用IP
+    uint32_t findNextAvailableIP(uint32_t startIP);
+
+    // 打印当前路由表
+    void printRoutingTable();
 };
 
 #endif // STEAM_VPN_BRIDGE_H
