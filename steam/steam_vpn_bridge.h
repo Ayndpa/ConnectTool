@@ -133,11 +133,6 @@ private:
     // TUN设备读取线程
     void tunReadThread();
 
-    // TUN设备写入线程（处理发送队列）
-    void tunWriteThread();
-
-
-
     // 广播路由更新
     void broadcastRouteUpdate();
 
