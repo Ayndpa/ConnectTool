@@ -4,10 +4,18 @@ project(ConnectTool)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Use UTF-8 encoding for MSVC to handle Chinese characters
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Find packages
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Boost REQUIRED)
+
+# Use static linking for glfw on all platforms
+set(GLFW_LIBRARY glfw)
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR})
@@ -54,10 +62,11 @@ endfunction()
 
 # Platform-specific Steam API linking
 if(WIN32)
-    # Windows 64-bit
-    find_steam_api(STEAM_API_LIB "win64/steam_api64.dll")
+    # Windows 64-bit - link against .lib, copy .dll at runtime
+    find_steam_api(STEAM_API_LIB "win64/steam_api64.lib")
+    find_steam_api(STEAM_API_DLL "win64/steam_api64.dll")
     target_link_libraries(ConnectTool
-        glfw
+        ${GLFW_LIBRARY}
         OpenGL::GL
         Boost::headers
         ${STEAM_API_LIB}
@@ -66,7 +75,7 @@ if(WIN32)
     # Copy steam_api64.dll to output directory for runtime
     add_custom_command(TARGET ConnectTool POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
-        ${STEAM_API_LIB}
+        ${STEAM_API_DLL}
         $<TARGET_FILE_DIR:ConnectTool>/steam_api64.dll
     )
 elseif(UNIX AND NOT APPLE)
@@ -75,7 +84,7 @@ elseif(UNIX AND NOT APPLE)
         # x86_64 Linux
         find_steam_api(STEAM_API_LIB "linux64/libsteam_api.so")
         target_link_libraries(ConnectTool
-            glfw
+            ${GLFW_LIBRARY}
             OpenGL::GL
             Boost::headers
             ${STEAM_API_LIB}
@@ -90,7 +99,7 @@ elseif(UNIX AND NOT APPLE)
         # x86 32-bit Linux
         find_steam_api(STEAM_API_LIB "linux32/libsteam_api.so")
         target_link_libraries(ConnectTool
-            glfw
+            ${GLFW_LIBRARY}
             OpenGL::GL
             Boost::headers
             ${STEAM_API_LIB}
@@ -105,7 +114,7 @@ elseif(UNIX AND NOT APPLE)
         # ARM64 Linux
         find_steam_api(STEAM_API_LIB "linuxarm64/libsteam_api.so")
         target_link_libraries(ConnectTool
-            glfw
+            ${GLFW_LIBRARY}
             OpenGL::GL
             Boost::headers
             ${STEAM_API_LIB}
@@ -123,7 +132,7 @@ elseif(APPLE)
     # macOS
     find_steam_api(STEAM_API_LIB "osx/libsteam_api.dylib")
     target_link_libraries(ConnectTool
-        glfw
+        ${GLFW_LIBRARY}
         OpenGL::GL
         Boost::headers
         ${STEAM_API_LIB}
