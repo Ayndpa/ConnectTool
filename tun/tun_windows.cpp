@@ -24,7 +24,7 @@ namespace tun {
 TunWindows::TunWindows() 
     : adapter_(nullptr)
     , session_(nullptr)
-    , mtu_(1500)
+    , mtu_(1200)
     , non_blocking_(false)
     , read_event_(nullptr)
     , wintun_dll_(nullptr)
