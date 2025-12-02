@@ -148,6 +148,9 @@ private:
     // 从IP包中提取源地址
     static uint32_t extractSourceIP(const uint8_t* packet, size_t length);
 
+    // 判断是否是广播地址
+    bool isBroadcastAddress(uint32_t ip) const;
+
     // 从SteamID生成确定的IP地址
     uint32_t generateIPFromSteamID(CSteamID steamID);
 

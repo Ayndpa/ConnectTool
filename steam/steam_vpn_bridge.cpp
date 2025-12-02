@@ -147,27 +147,6 @@ void SteamVpnBridge::tunReadThread() {
             // 提取目标IP
             uint32_t destIP = extractDestIP(buffer, bytesRead);
             
-            // 查找路由
-            HSteamNetConnection targetConn = k_HSteamNetConnection_Invalid;
-            bool routeFound = false;
-            
-            {
-                std::lock_guard<std::mutex> lock(routingMutex_);
-                auto it = routingTable_.find(destIP);
-                if (it != routingTable_.end()) {
-                    targetConn = it->second.conn;
-                    routeFound = true;
-                }
-            }
-
-            if (!routeFound) {
-                continue;
-            }
-
-            if (targetConn == k_HSteamNetConnection_Invalid) {
-                continue;
-            }
-
             // 封装VPN消息
             std::vector<uint8_t> vpnPacket;
             VpnMessageHeader header;
@@ -181,21 +160,66 @@ void SteamVpnBridge::tunReadThread() {
             // 通过Steam发送
             ISteamNetworkingSockets* steamInterface = steamManager_->getInterface();
             
-            // 单播发送
-            EResult result = steamInterface->SendMessageToConnection(
-                targetConn,
-                vpnPacket.data(),
-                static_cast<uint32_t>(vpnPacket.size()),
-                k_nSteamNetworkingSend_UnreliableNoNagle,
-                nullptr
-            );
-
-            std::lock_guard<std::mutex> lock(statsMutex_);
-            if (result == k_EResultOK) {
-                stats_.packetsSent++;
-                stats_.bytesSent += bytesRead;
+            // 检查是否是广播地址
+            if (isBroadcastAddress(destIP)) {
+                // 广播包：转发给所有连接
+                const auto& connections = steamManager_->getConnections();
+                
+                for (auto conn : connections) {
+                    EResult result = steamInterface->SendMessageToConnection(
+                        conn,
+                        vpnPacket.data(),
+                        static_cast<uint32_t>(vpnPacket.size()),
+                        k_nSteamNetworkingSend_UnreliableNoNagle,
+                        nullptr
+                    );
+                    
+                    std::lock_guard<std::mutex> lock(statsMutex_);
+                    if (result == k_EResultOK) {
+                        stats_.packetsSent++;
+                        stats_.bytesSent += bytesRead;
+                    } else {
+                        stats_.packetsDropped++;
+                    }
+                }
             } else {
-                stats_.packetsDropped++;
+                // 单播包：查找路由并转发
+                HSteamNetConnection targetConn = k_HSteamNetConnection_Invalid;
+                bool routeFound = false;
+                
+                {
+                    std::lock_guard<std::mutex> lock(routingMutex_);
+                    auto it = routingTable_.find(destIP);
+                    if (it != routingTable_.end()) {
+                        targetConn = it->second.conn;
+                        routeFound = true;
+                    }
+                }
+
+                if (!routeFound) {
+                    continue;
+                }
+
+                if (targetConn == k_HSteamNetConnection_Invalid) {
+                    continue;
+                }
+
+                // 单播发送
+                EResult result = steamInterface->SendMessageToConnection(
+                    targetConn,
+                    vpnPacket.data(),
+                    static_cast<uint32_t>(vpnPacket.size()),
+                    k_nSteamNetworkingSend_UnreliableNoNagle,
+                    nullptr
+                );
+
+                std::lock_guard<std::mutex> lock(statsMutex_);
+                if (result == k_EResultOK) {
+                    stats_.packetsSent++;
+                    stats_.bytesSent += bytesRead;
+                } else {
+                    stats_.packetsDropped++;
+                }
             }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -415,6 +439,28 @@ uint32_t SteamVpnBridge::extractSourceIP(const uint8_t* packet, size_t length) {
     uint32_t srcIP;
     memcpy(&srcIP, packet + 12, 4);
     return ntohl(srcIP);
+}
+
+bool SteamVpnBridge::isBroadcastAddress(uint32_t ip) const {
+    // 全1广播地址 255.255.255.255
+    if (ip == 0xFFFFFFFF) {
+        return true;
+    }
+    
+    // 子网广播地址（如 10.0.0.255 对于 10.0.0.0/24）
+    uint32_t subnetBroadcast = (baseIP_ & subnetMask_) | (~subnetMask_);
+    if (ip == subnetBroadcast) {
+        return true;
+    }
+    
+    // 多播地址 224.0.0.0 - 239.255.255.255 (224.0.0.0/4)
+    // 第一个字节在 224-239 范围内
+    uint8_t firstOctet = (ip >> 24) & 0xFF;
+    if (firstOctet >= 224 && firstOctet <= 239) {
+        return true;
+    }
+    
+    return false;
 }
 
 uint32_t SteamVpnBridge::generateIPFromSteamID(CSteamID steamID) {
