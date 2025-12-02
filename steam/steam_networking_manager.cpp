@@ -51,7 +51,7 @@ bool SteamNetworkingManager::initialize()
         k_ESteamNetworkingConfig_Int32,
         &logLevel);
 
-    // 1. 允许 P2P (ICE) 直连
+    // 允许 P2P (ICE) 直连
     // 默认情况下 Steam 可能会保守地只允许 LAN，这里设置为 "All" 允许公网 P2P
     int32 nIceEnable = k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Public;
     SteamNetworkingUtils()->SetConfigValue(
@@ -60,17 +60,6 @@ bool SteamNetworkingManager::initialize()
         0,                               // Global 时此参数填 0
         k_ESteamNetworkingConfig_Int32,
         &nIceEnable);
-
-    // 2. (可选) 极度排斥中继
-    // 如果你铁了心不想走中继，可以给中继路径增加巨大的虚拟延迟惩罚
-    // 这样只有在直连完全打不通（比如防火墙太严格）时，Steam 才会无奈选择中继
-    int32 nSdrPenalty = 10000; // 10000ms 惩罚
-    SteamNetworkingUtils()->SetConfigValue(
-        k_ESteamNetworkingConfig_P2P_Transport_SDR_Penalty,
-        k_ESteamNetworkingConfig_Global,
-        0,
-        k_ESteamNetworkingConfig_Int32,
-        &nSdrPenalty);
 
     // Allow connections from IPs without authentication
     int32 allowWithoutAuth = 2;
@@ -167,6 +156,16 @@ void SteamNetworkingManager::disconnect()
         m_pInterface->CloseConnection(g_hConnection, 0, nullptr, false);
         g_hConnection = k_HSteamNetConnection_Invalid;
     }
+    
+    // Close all peer connections
+    for (auto& pair : peerConnections_)
+    {
+        if (pair.second != k_HSteamNetConnection_Invalid)
+        {
+            m_pInterface->CloseConnection(pair.second, 0, nullptr, false);
+        }
+    }
+    peerConnections_.clear();
     
     // Close all host connections
     for (auto conn : connections)

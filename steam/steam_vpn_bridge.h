@@ -5,55 +5,26 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
-#include <condition_variable>
 #include <map>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <steam_api.h>
 #include <isteamnetworkingsockets.h>
+
 #include "../tun/tun_interface.h"
+#include "../net/vpn_protocol.h"
+#include "../net/ip_negotiator.h"
+#include "../net/heartbeat_manager.h"
 
 // Forward declarations
 class SteamNetworkingManager;
 
 /**
- * @brief IP路由表项
- */
-struct RouteEntry {
-    CSteamID steamID;           // 对应的Steam ID
-    HSteamNetConnection conn;   // 对应的Steam连接
-    uint32_t ipAddress;         // IP地址（主机字节序）
-    std::string name;           // 用户名
-    bool isLocal;               // 是否是本机
-};
-
-/**
- * @brief VPN消息类型
- */
-enum class VpnMessageType : uint8_t {
-    IP_PACKET = 1,          // IP数据包
-    ROUTE_UPDATE = 3,       // 路由表更新
-    PING = 4,               // 心跳包
-    PONG = 5,               // 心跳响应
-    IP_PROBE = 6,           // IP探测
-    IP_CONFLICT = 7         // IP冲突
-};
-
-/**
- * @brief VPN消息头
- */
-#pragma pack(push, 1)
-struct VpnMessageHeader {
-    VpnMessageType type;    // 消息类型
-    uint16_t length;        // 数据长度
-};
-#pragma pack(pop)
-
-/**
  * @brief Steam VPN桥接器
  * 
  * 负责在虚拟网卡和Steam网络之间转发IP数据包
+ * 使用分布式 IP 协商协议自动分配 IP 地址
  */
 class SteamVpnBridge {
 public:
@@ -105,7 +76,7 @@ public:
     void handleVpnMessage(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
 
     /**
-     * @brief 当新用户加入时分配IP地址
+     * @brief 当新用户加入时
      * @param steamID 用户的Steam ID
      * @param conn 连接句柄
      */
@@ -133,9 +104,6 @@ private:
     // TUN设备读取线程
     void tunReadThread();
 
-    // 广播路由更新
-    void broadcastRouteUpdate();
-
     // IP地址转字符串
     static std::string ipToString(uint32_t ip);
 
@@ -150,9 +118,27 @@ private:
 
     // 判断是否是广播地址
     bool isBroadcastAddress(uint32_t ip) const;
-
-    // 从SteamID生成确定的IP地址
-    uint32_t generateIPFromSteamID(CSteamID steamID);
+    
+    // 发送 VPN 消息
+    void sendVpnMessage(VpnMessageType type, const uint8_t* payload, size_t payloadLength, 
+                        HSteamNetConnection conn, bool reliable = true);
+    void broadcastVpnMessage(VpnMessageType type, const uint8_t* payload, size_t payloadLength, 
+                             bool reliable = true);
+    
+    // IP 协商成功回调
+    void onNegotiationSuccess(uint32_t ipAddress, const NodeID& nodeId);
+    
+    // 节点过期回调
+    void onNodeExpired(const NodeID& nodeId, uint32_t ipAddress);
+    
+    // 更新路由表
+    void updateRoute(const NodeID& nodeId, CSteamID steamId, uint32_t ipAddress,
+                     HSteamNetConnection conn, const std::string& name);
+    void removeRoute(uint32_t ipAddress);
+    
+    // 发送路由更新
+    void broadcastRouteUpdate();
+    void sendRouteUpdateTo(HSteamNetConnection conn);
 
     // Steam网络管理器
     SteamNetworkingManager* steamManager_;
@@ -166,19 +152,13 @@ private:
     // TUN读取线程
     std::unique_ptr<std::thread> tunReadThread_;
 
-    // TUN写入线程
-    std::unique_ptr<std::thread> tunWriteThread_;
-
     // 路由表（IP地址 -> 路由信息）
     std::map<uint32_t, RouteEntry> routingTable_;
     mutable std::mutex routingMutex_;
 
-    // IP地址池
-    uint32_t baseIP_;           // 基础IP地址
-    uint32_t subnetMask_;       // 子网掩码
-    uint32_t nextIP_;           // 下一个可分配的IP
-    std::vector<uint32_t> allocatedIPs_;  // 已分配的IP列表
-    std::mutex ipAllocationMutex_;
+    // IP地址池配置
+    uint32_t baseIP_;
+    uint32_t subnetMask_;
 
     // 本地IP地址
     uint32_t localIP_;
@@ -186,43 +166,10 @@ private:
     // 统计信息
     Statistics stats_;
     mutable std::mutex statsMutex_;
-
-    // 发送队列
-    struct OutgoingPacket {
-        std::vector<uint8_t> data;
-        HSteamNetConnection targetConn;
-    };
-    std::vector<OutgoingPacket> sendQueue_;
-    std::mutex sendQueueMutex_;
-    std::condition_variable sendQueueCv_;
-
-    // IP协商相关
-    enum class IpNegotiationState {
-        IDLE,
-        NEGOTIATING,
-        STABLE
-    };
-    IpNegotiationState negotiationState_;
-    uint32_t candidateIP_;
-    std::chrono::steady_clock::time_point probeStartTime_;
     
-    // 开始IP协商
-    void startIpNegotiation();
-    
-    // 检查IP协商超时
-    void checkIpNegotiationTimeout();
-    
-    // 处理IP探测
-    void handleIpProbe(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
-    
-    // 处理IP冲突
-    void handleIpConflict(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
-
-    // 查找下一个可用IP
-    uint32_t findNextAvailableIP(uint32_t startIP);
-
-    // 打印当前路由表
-    void printRoutingTable();
+    // 分布式协议组件
+    IpNegotiator ipNegotiator_;
+    HeartbeatManager heartbeatManager_;
 };
 
 #endif // STEAM_VPN_BRIDGE_H

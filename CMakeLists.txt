@@ -73,6 +73,16 @@ endfunction()
 
 generate_grpc_proto(${PROTO_SRC_DIR}/connect_tool.proto)
 
+# Net module sources
+set(NET_SOURCES
+    net/node_identity.cpp
+    net/ip_negotiator.cpp
+    net/heartbeat_manager.cpp
+)
+
+# Include net directory
+include_directories(${CMAKE_SOURCE_DIR}/net)
+
 # ConnectToolCore Executable
 add_executable(ConnectToolCore
     server_main.cpp
@@ -82,6 +92,7 @@ add_executable(ConnectToolCore
     steam/steam_room_manager.cpp 
     steam/steam_utils.cpp 
     steam/steam_vpn_bridge.cpp
+    ${NET_SOURCES}
     ${TUN_SOURCES}
     ${GENERATED_PROTO_SRCS}
     ${GENERATED_PROTO_HDRS}

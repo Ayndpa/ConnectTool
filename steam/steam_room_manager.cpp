@@ -89,8 +89,8 @@ void SteamMatchmakingCallbacks::OnLobbyEntered(LobbyEnter_t *pCallback)
 
         // 【新增】自动启动VPN
         if (manager_->getVpnBridge()) {
-            std::cout << "Auto-starting VPN with default settings (10.0.0.0/24)..." << std::endl;
-            manager_->getVpnBridge()->start("", "10.0.0.0", "255.255.255.0");
+            std::cout << "Auto-starting VPN with default settings (10.0.0.0/8)..." << std::endl;
+            manager_->getVpnBridge()->start("", "10.0.0.0", "255.0.0.0");
         }
         
         // Connect to all existing members in the lobby (except ourselves)
@@ -164,7 +164,7 @@ SteamRoomManager::~SteamRoomManager()
 
 bool SteamRoomManager::createLobby()
 {
-    SteamAPICall_t hSteamAPICall = SteamMatchmaking()->CreateLobby(k_ELobbyTypePublic, 4);
+    SteamAPICall_t hSteamAPICall = SteamMatchmaking()->CreateLobby(k_ELobbyTypePublic, 250);
     if (hSteamAPICall == k_uAPICallInvalid)
     {
         std::cerr << "Failed to create lobby" << std::endl;
@@ -192,12 +192,9 @@ void SteamRoomManager::leaveLobby()
         SteamMatchmaking()->LeaveLobby(currentLobby);
         currentLobby = k_steamIDNil;
         
-        // Close listen socket
-        if (networkingManager_->getListenSock() != k_HSteamListenSocket_Invalid)
-        {
-            networkingManager_->getInterface()->CloseListenSocket(networkingManager_->getListenSock());
-            networkingManager_->getListenSock() = k_HSteamListenSocket_Invalid;
-        }
+        // Disconnect all P2P connections and close listen socket
+        // This properly cleans up all network state
+        networkingManager_->disconnect();
 
         // 【新增】自动关闭VPN
         if (networkingManager_->getVpnBridge()) {
