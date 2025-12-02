@@ -161,17 +161,10 @@ void SteamVpnBridge::tunReadThread() {
             }
 
             if (!routeFound) {
-                 // Log dropped packet to help debugging
-                if (destIP != 0) { // Don't log non-IPv4 or invalid packets
-                     std::cout << "Packet dropped: No route for " << ipToString(destIP) << std::endl;
-                }
                 continue;
             }
 
             if (targetConn == k_HSteamNetConnection_Invalid) {
-                // 路由找到了但连接无效（可能是本地路由或连接信息丢失）
-                std::cout << "Packet dropped: Route found for " << ipToString(destIP) 
-                          << " but connection is invalid" << std::endl;
                 continue;
             }
 
@@ -201,12 +194,8 @@ void SteamVpnBridge::tunReadThread() {
             if (result == k_EResultOK) {
                 stats_.packetsSent++;
                 stats_.bytesSent += bytesRead;
-                std::cout << "[VPN] Sent " << bytesRead << " bytes to " << ipToString(destIP) 
-                          << " via conn " << targetConn << std::endl;
             } else {
                 stats_.packetsDropped++;
-                std::cout << "[VPN] Failed to send to " << ipToString(destIP) 
-                          << ", result: " << static_cast<int>(result) << std::endl;
             }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

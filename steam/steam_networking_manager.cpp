@@ -8,7 +8,6 @@ SteamNetworkingManager *SteamNetworkingManager::instance = nullptr;
 // STEAM_CALLBACK 回调函数 - 当连接状态改变时由 SteamAPI_RunCallbacks() 调用
 void SteamNetworkingManager::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pCallback)
 {
-    std::cout << "[SteamNetworkingManager] STEAM_CALLBACK triggered!" << std::endl;
     handleConnectionStatusChanged(pCallback);
 }
 
@@ -37,11 +36,11 @@ bool SteamNetworkingManager::initialize()
         return false;
     }
 
-    // 【新增】开启详细日志
-    SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Msg,
+    // 仅输出错误级别日志
+    SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Error,
                                                    [](ESteamNetworkingSocketsDebugOutputType nType, const char *pszMsg)
                                                    {
-                                                       std::cout << "[SteamNet] " << pszMsg << std::endl;
+                                                       std::cerr << "[SteamNet Error] " << pszMsg << std::endl;
                                                    });
 
     int32 logLevel = k_ESteamNetworkingSocketsDebugOutputType_Verbose;
@@ -253,15 +252,10 @@ std::map<CSteamID, HSteamNetConnection> SteamNetworkingManager::getAllPeerConnec
 
 void SteamNetworkingManager::handleConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo)
 {
-    std::cout << "[SteamNetworkingManager] handleConnectionStatusChanged called, oldState=" 
-              << pInfo->m_eOldState << ", newState=" << pInfo->m_info.m_eState 
-              << ", conn=" << pInfo->m_hConn << std::endl;
-    
     std::lock_guard<std::mutex> lock(connectionsMutex);
-    std::cout << "Connection status changed: " << pInfo->m_info.m_eState << " for connection " << pInfo->m_hConn << std::endl;
     if (pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally)
     {
-        std::cout << "Connection failed: " << pInfo->m_info.m_szEndDebug << std::endl;
+        std::cerr << "Connection failed: " << pInfo->m_info.m_szEndDebug << std::endl;
     }
     if (pInfo->m_eOldState == k_ESteamNetworkingConnectionState_None && pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_Connecting)
     {

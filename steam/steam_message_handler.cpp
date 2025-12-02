@@ -126,8 +126,6 @@ void SteamMessageHandler::pollMessages() {
             ISteamNetworkingMessage* pIncomingMsg = pIncomingMsgs[i];
             const uint8_t* data = (const uint8_t*)pIncomingMsg->m_pData;
             size_t size = pIncomingMsg->m_cbSize;
-            
-            std::cout << "[SteamMessageHandler] Received message of size " << size << " from connection " << conn << std::endl;
 
             // Check if this is a VPN message (first byte indicates message type)
             // VpnMessageType enum values range from 1 to 7
