@@ -236,6 +236,32 @@ bool TunWindows::open(const std::string& deviceName, int mtu) {
     if (!adapter_) {
         // 创建新适配器
         adapter_ = WintunCreateAdapter(wName.c_str(), wTunnelType.c_str(), &requestedGuid);
+        
+        // 如果创建失败且是因为已存在，尝试强制重建
+        if (!adapter_ && GetLastError() == ERROR_ALREADY_EXISTS) {
+            std::cout << "Adapter already exists but couldn't be opened, attempting to recreate..." << std::endl;
+            
+            // 尝试用不同的方式打开并关闭旧适配器
+            // 先尝试不带 GUID 创建，这会清理掉旧的
+            WINTUN_ADAPTER_HANDLE oldAdapter = WintunOpenAdapter(wName.c_str());
+            if (oldAdapter) {
+                WintunCloseAdapter(oldAdapter);
+                // 短暂等待让系统完成清理
+                Sleep(100);
+            }
+            
+            // 再次尝试创建
+            adapter_ = WintunCreateAdapter(wName.c_str(), wTunnelType.c_str(), &requestedGuid);
+            
+            // 如果还是失败，尝试用新的随机 GUID 创建
+            if (!adapter_ && GetLastError() == ERROR_ALREADY_EXISTS) {
+                std::cout << "Retrying with a new GUID..." << std::endl;
+                GUID newGuid;
+                if (UuidCreate(&newGuid) == RPC_S_OK) {
+                    adapter_ = WintunCreateAdapter(wName.c_str(), wTunnelType.c_str(), &newGuid);
+                }
+            }
+        }
     }
 
     if (!adapter_) {
