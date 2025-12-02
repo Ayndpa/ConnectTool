@@ -89,10 +89,18 @@ add_executable(ConnectToolCore
 
 target_include_directories(ConnectToolCore PRIVATE ${PROTO_BINARY_DIR} ${CMAKE_BINARY_DIR})
 
+# Platform-specific Steam SDK library path
+if(WIN32)
+    set(STEAM_LIB ${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.lib)
+elseif(APPLE)
+    set(STEAM_LIB ${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/osx/libsteam_api.dylib)
+elseif(UNIX)
+    set(STEAM_LIB ${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/linux64/libsteam_api.so)
+endif()
+
 target_link_libraries(ConnectToolCore PRIVATE 
     nanoid 
-    ${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.lib 
-    ws2_32
+    ${STEAM_LIB}
     protobuf::libprotobuf 
     gRPC::grpc++
     absl::base
@@ -100,28 +108,29 @@ target_link_libraries(ConnectToolCore PRIVATE
     asio
 )
 
-target_link_libraries(ConnectToolCore PRIVATE 
-    nanoid 
-    ${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.lib 
-    ws2_32
-    protobuf::libprotobuf 
-    gRPC::grpc++
-    absl::base
-    absl::strings
-)
-
+# Platform-specific libraries
 if(WIN32)
-    target_link_libraries(ConnectToolCore PRIVATE iphlpapi ole32 rpcrt4)
+    target_link_libraries(ConnectToolCore PRIVATE ws2_32 iphlpapi ole32 rpcrt4)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(ConnectToolCore PRIVATE pthread)
+elseif(APPLE)
+    target_link_libraries(ConnectToolCore PRIVATE pthread)
+    find_library(CORE_FOUNDATION CoreFoundation)
+    find_library(SECURITY Security)
+    if(CORE_FOUNDATION AND SECURITY)
+        target_link_libraries(ConnectToolCore PRIVATE ${CORE_FOUNDATION} ${SECURITY})
+    endif()
 endif()
 
-# Copy steam_api64.dll to output directory
-add_custom_command(TARGET ConnectToolCore POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.dll"
-    $<TARGET_FILE_DIR:ConnectToolCore>)
-
-# Copy wintun.dll to output directory (Windows only)
+# Copy platform-specific DLLs to output directory
 if(WIN32)
+    # Copy steam_api64.dll
+    add_custom_command(TARGET ConnectToolCore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.dll"
+        $<TARGET_FILE_DIR:ConnectToolCore>)
+    
+    # Copy wintun.dll
     add_custom_command(TARGET ConnectToolCore POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/third_party/wintun/bin/amd64/wintun.dll"

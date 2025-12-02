@@ -1,0 +1,177 @@
+name: Build ConnectTool
+
+on:
+  push:
+    branches: [main, master, tun]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ae8fa5ae5e6162a88e412618245809ed2aa579d9
+
+      - name: Download Steamworks SDK
+        run: |
+          # 创建目录结构
+          New-Item -ItemType Directory -Force -Path "third_party/steamsdk/redistributable_bin/win64"
+          New-Item -ItemType Directory -Force -Path "third_party/steamsdk/public/steam"
+          # 注意：Steamworks SDK 需要从 Valve 合作伙伴站点获取
+          # 这里创建占位文件以便编译测试（实际使用时需要提供真实 SDK）
+          echo "placeholder" > third_party/steamsdk/redistributable_bin/win64/steam_api64.lib
+          echo "placeholder" > third_party/steamsdk/redistributable_bin/win64/steam_api64.dll
+
+      - name: Download WinTUN
+        run: |
+          # 下载 WinTUN
+          New-Item -ItemType Directory -Force -Path "third_party/wintun"
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "third_party/wintun_temp"
+          Move-Item -Path "third_party/wintun_temp/wintun/*" -Destination "third_party/wintun/"
+          Remove-Item -Recurse -Force "third_party/wintun_temp"
+          Remove-Item "wintun.zip"
+
+      - name: Setup nanoid_cpp
+        run: |
+          if (-not (Test-Path "third_party/nanoid_cpp/CMakeLists.txt")) {
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "third_party/nanoid_cpp"
+            git clone https://github.com/mcmikecreations/nanoid_cpp.git third_party/nanoid_cpp
+          }
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target ConnectToolCore
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConnectToolCore-Windows
+          path: |
+            build/Release/ConnectToolCore.exe
+            build/Release/*.dll
+          if-no-files-found: warn
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ae8fa5ae5e6162a88e412618245809ed2aa579d9
+
+      - name: Setup Steamworks SDK placeholder
+        run: |
+          # 创建目录结构
+          mkdir -p third_party/steamsdk/redistributable_bin/linux64
+          mkdir -p third_party/steamsdk/public/steam
+          # 创建占位文件
+          touch third_party/steamsdk/redistributable_bin/linux64/libsteam_api.so
+          # 创建空的静态库占位
+          ar rcs third_party/steamsdk/redistributable_bin/linux64/libsteam_api.a
+
+      - name: Setup nanoid_cpp
+        run: |
+          if [ ! -f "third_party/nanoid_cpp/CMakeLists.txt" ]; then
+            rm -rf third_party/nanoid_cpp
+            git clone https://github.com/mcmikecreations/nanoid_cpp.git third_party/nanoid_cpp
+          fi
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build --target ConnectToolCore
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConnectToolCore-Linux
+          path: |
+            build/ConnectToolCore
+          if-no-files-found: warn
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ae8fa5ae5e6162a88e412618245809ed2aa579d9
+
+      - name: Setup Steamworks SDK placeholder
+        run: |
+          # 创建目录结构
+          mkdir -p third_party/steamsdk/redistributable_bin/osx
+          mkdir -p third_party/steamsdk/public/steam
+          # 创建占位文件
+          touch third_party/steamsdk/redistributable_bin/osx/libsteam_api.dylib
+          # 创建空的静态库占位
+          ar rcs third_party/steamsdk/redistributable_bin/osx/libsteam_api.a
+
+      - name: Setup nanoid_cpp
+        run: |
+          if [ ! -f "third_party/nanoid_cpp/CMakeLists.txt" ]; then
+            rm -rf third_party/nanoid_cpp
+            git clone https://github.com/mcmikecreations/nanoid_cpp.git third_party/nanoid_cpp
+          fi
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-osx \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build --target ConnectToolCore
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConnectToolCore-macOS
+          path: |
+            build/ConnectToolCore
+          if-no-files-found: warn
