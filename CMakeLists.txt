@@ -31,7 +31,7 @@ elseif(APPLE)
     list(APPEND TUN_SOURCES tun/tun_macos.cpp)
 elseif(WIN32)
     list(APPEND TUN_SOURCES tun/tun_windows.cpp)
-    include_directories(${CMAKE_SOURCE_DIR}/third_party/wintun/api)
+    include_directories(${CMAKE_SOURCE_DIR}/third_party/wintun/include)
 endif()
 
 # Include directories
@@ -111,7 +111,7 @@ target_link_libraries(ConnectToolCore PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(ConnectToolCore PRIVATE iphlpapi ole32)
+    target_link_libraries(ConnectToolCore PRIVATE iphlpapi ole32 rpcrt4)
 endif()
 
 # Copy steam_api64.dll to output directory
@@ -119,3 +119,11 @@ add_custom_command(TARGET ConnectToolCore POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_SOURCE_DIR}/third_party/steamsdk/redistributable_bin/win64/steam_api64.dll"
     $<TARGET_FILE_DIR:ConnectToolCore>)
+
+# Copy wintun.dll to output directory (Windows only)
+if(WIN32)
+    add_custom_command(TARGET ConnectToolCore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/wintun/bin/amd64/wintun.dll"
+        $<TARGET_FILE_DIR:ConnectToolCore>)
+endif()

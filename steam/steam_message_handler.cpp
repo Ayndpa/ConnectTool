@@ -34,6 +34,8 @@ void SteamMessageHandler::start() {
     if (running_) return;
     running_ = true;
     
+    std::cout << "[SteamMessageHandler] Starting message handler..." << std::endl;
+    
     // 创建定时器
     pollTimer_ = std::make_unique<asio::steady_timer>(*ioContext_);
     
@@ -42,7 +44,10 @@ void SteamMessageHandler::start() {
     
     // 如果使用内部 io_context，需要在单独线程中运行
     if (ioContext_ == internalIoContext_.get()) {
+        std::cout << "[SteamMessageHandler] Using internal io_context, starting thread..." << std::endl;
         ioThread_ = std::make_unique<std::thread>(&SteamMessageHandler::runInternalLoop, this);
+    } else {
+        std::cout << "[SteamMessageHandler] Using external io_context" << std::endl;
     }
 }
 
@@ -100,8 +105,9 @@ void SteamMessageHandler::schedulePoll() {
 }
 
 void SteamMessageHandler::pollMessages() {
-    // Poll networking callbacks
-    m_pInterface_->RunCallbacks();
+    // 注意：不要在这里调用 RunCallbacks()！
+    // Steam 回调应该由主线程的 SteamAPI_RunCallbacks() 处理
+    // 在这里调用会导致死锁，因为回调中可能会获取 connectionsMutex_
     
     // Receive messages
     int totalMessages = 0;
@@ -121,6 +127,8 @@ void SteamMessageHandler::pollMessages() {
             const uint8_t* data = (const uint8_t*)pIncomingMsg->m_pData;
             size_t size = pIncomingMsg->m_cbSize;
             
+            std::cout << "[SteamMessageHandler] Received message of size " << size << " from connection " << conn << std::endl;
+
             // Check if this is a VPN message (first byte indicates message type)
             // VpnMessageType enum values range from 1 to 7
             if (size > 0 && data[0] >= 1 && data[0] <= 7) {

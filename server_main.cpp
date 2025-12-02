@@ -20,8 +20,6 @@ using grpc::ServerContext;
 using grpc::Status;
 
 using connecttool::ConnectToolService;
-using connecttool::InitSteamRequest;
-using connecttool::InitSteamResponse;
 using connecttool::CreateLobbyRequest;
 using connecttool::CreateLobbyResponse;
 using connecttool::JoinLobbyRequest;
@@ -42,15 +40,6 @@ using connecttool::GetVPNRoutingTableResponse;
 class ConnectToolServiceImpl final : public ConnectToolService::Service {
 public:
     ConnectToolServiceImpl(ConnectToolCore* core) : core_(core) {}
-
-    Status InitSteam(ServerContext* context, const InitSteamRequest* request, InitSteamResponse* reply) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // Steam is already initialized in main, but we can return status
-        // Or we could allow re-init if we supported shutdown/restart logic
-        reply->set_success(true); 
-        reply->set_message("Steam initialized (managed by server process)");
-        return Status::OK;
-    }
 
     Status CreateLobby(ServerContext* context, const CreateLobbyRequest* request, CreateLobbyResponse* reply) override {
         std::lock_guard<std::mutex> lock(mutex_);

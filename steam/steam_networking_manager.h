@@ -87,8 +87,8 @@ private:
     // VPN Bridge
     SteamVpnBridge* vpnBridge_;
 
-    // Callback
-    static void OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo);
+    // Callback - 使用 STEAM_CALLBACK 宏来确保回调正确注册
+    STEAM_CALLBACK(SteamNetworkingManager, OnSteamNetConnectionStatusChanged, SteamNetConnectionStatusChangedCallback_t);
     void handleConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo);
 
     friend class SteamRoomManager;

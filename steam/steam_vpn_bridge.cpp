@@ -168,36 +168,45 @@ void SteamVpnBridge::tunReadThread() {
                 continue;
             }
 
-            if (targetConn != k_HSteamNetConnection_Invalid) {
-                // 封装VPN消息
-                std::vector<uint8_t> vpnPacket;
-                VpnMessageHeader header;
-                header.type = VpnMessageType::IP_PACKET;
-                header.length = htons(static_cast<uint16_t>(bytesRead));
-                
-                vpnPacket.resize(sizeof(VpnMessageHeader) + bytesRead);
-                memcpy(vpnPacket.data(), &header, sizeof(VpnMessageHeader));
-                memcpy(vpnPacket.data() + sizeof(VpnMessageHeader), buffer, bytesRead);
+            if (targetConn == k_HSteamNetConnection_Invalid) {
+                // 路由找到了但连接无效（可能是本地路由或连接信息丢失）
+                std::cout << "Packet dropped: Route found for " << ipToString(destIP) 
+                          << " but connection is invalid" << std::endl;
+                continue;
+            }
 
-                // 通过Steam发送
-                ISteamNetworkingSockets* steamInterface = steamManager_->getInterface();
-                
-                // 单播发送
-                EResult result = steamInterface->SendMessageToConnection(
-                    targetConn,
-                    vpnPacket.data(),
-                    static_cast<uint32_t>(vpnPacket.size()),
-                    k_nSteamNetworkingSend_UnreliableNoNagle,
-                    nullptr
-                );
+            // 封装VPN消息
+            std::vector<uint8_t> vpnPacket;
+            VpnMessageHeader header;
+            header.type = VpnMessageType::IP_PACKET;
+            header.length = htons(static_cast<uint16_t>(bytesRead));
+            
+            vpnPacket.resize(sizeof(VpnMessageHeader) + bytesRead);
+            memcpy(vpnPacket.data(), &header, sizeof(VpnMessageHeader));
+            memcpy(vpnPacket.data() + sizeof(VpnMessageHeader), buffer, bytesRead);
 
-                std::lock_guard<std::mutex> lock(statsMutex_);
-                if (result == k_EResultOK) {
-                    stats_.packetsSent++;
-                    stats_.bytesSent += bytesRead;
-                } else {
-                    stats_.packetsDropped++;
-                }
+            // 通过Steam发送
+            ISteamNetworkingSockets* steamInterface = steamManager_->getInterface();
+            
+            // 单播发送
+            EResult result = steamInterface->SendMessageToConnection(
+                targetConn,
+                vpnPacket.data(),
+                static_cast<uint32_t>(vpnPacket.size()),
+                k_nSteamNetworkingSend_UnreliableNoNagle,
+                nullptr
+            );
+
+            std::lock_guard<std::mutex> lock(statsMutex_);
+            if (result == k_EResultOK) {
+                stats_.packetsSent++;
+                stats_.bytesSent += bytesRead;
+                std::cout << "[VPN] Sent " << bytesRead << " bytes to " << ipToString(destIP) 
+                          << " via conn " << targetConn << std::endl;
+            } else {
+                stats_.packetsDropped++;
+                std::cout << "[VPN] Failed to send to " << ipToString(destIP) 
+                          << ", result: " << static_cast<int>(result) << std::endl;
             }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -496,7 +505,7 @@ void SteamVpnBridge::checkIpNegotiationTimeout() {
         // 【关键修改】不要使用 255.255.255.255 作为掩码，否则Windows不知道该网卡属于哪个网段
         // 使用实际的子网掩码（例如 255.255.255.0），这样当你 ping 网段内其他不存在的IP时，
         // 流量也会被路由到 TUN 设备，方便你在 tunReadThread 中进行测试。
-        if (tunDevice_->set_ip(localIPStr, subnetMaskStr) && tunDevice_->set_up()) {
+        if (tunDevice_->set_ip(localIPStr, subnetMaskStr) && tunDevice_->set_up(true)) {
             
             RouteEntry localRoute;
             localRoute.steamID = SteamUser()->GetSteamID();

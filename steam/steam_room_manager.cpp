@@ -226,7 +226,21 @@ bool SteamRoomManager::searchLobbies()
 
 bool SteamRoomManager::joinLobby(CSteamID lobbyID)
 {
-    if (SteamMatchmaking()->JoinLobby(lobbyID) != k_EResultOK)
+    // Create P2P listen socket BEFORE joining lobby
+    // This is needed to receive incoming connections from other lobby members
+    if (networkingManager_->getListenSock() == k_HSteamListenSocket_Invalid)
+    {
+        networkingManager_->getListenSock() = networkingManager_->getInterface()->CreateListenSocketP2P(0, 0, nullptr);
+        if (networkingManager_->getListenSock() == k_HSteamListenSocket_Invalid)
+        {
+            std::cerr << "Failed to create listen socket for joining lobby" << std::endl;
+            return false;
+        }
+        std::cout << "Created P2P listen socket for joining lobby" << std::endl;
+    }
+    
+    SteamAPICall_t hCall = SteamMatchmaking()->JoinLobby(lobbyID);
+    if (hCall == k_uAPICallInvalid)
     {
         std::cerr << "Failed to join lobby" << std::endl;
         return false;

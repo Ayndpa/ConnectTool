@@ -5,13 +5,11 @@
 
 SteamNetworkingManager *SteamNetworkingManager::instance = nullptr;
 
-// Static callback function
-void SteamNetworkingManager::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo)
+// STEAM_CALLBACK 回调函数 - 当连接状态改变时由 SteamAPI_RunCallbacks() 调用
+void SteamNetworkingManager::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pCallback)
 {
-    if (instance)
-    {
-        instance->handleConnectionStatusChanged(pInfo);
-    }
+    std::cout << "[SteamNetworkingManager] STEAM_CALLBACK triggered!" << std::endl;
+    handleConnectionStatusChanged(pCallback);
 }
 
 SteamNetworkingManager::SteamNetworkingManager()
@@ -86,7 +84,9 @@ bool SteamNetworkingManager::initialize()
 
     // Create callbacks after Steam API init
     SteamNetworkingUtils()->InitRelayNetworkAccess();
-    SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(OnSteamNetConnectionStatusChanged);
+    // 注意：不再使用 SetGlobalCallback，而是使用 STEAM_CALLBACK 宏
+    // STEAM_CALLBACK 会自动在 SteamAPI_RunCallbacks() 时调度回调
+    std::cout << "[SteamNetworkingManager] Using STEAM_CALLBACK for connection status changes" << std::endl;
 
     m_pInterface = SteamNetworkingSockets();
 
@@ -253,6 +253,10 @@ std::map<CSteamID, HSteamNetConnection> SteamNetworkingManager::getAllPeerConnec
 
 void SteamNetworkingManager::handleConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo)
 {
+    std::cout << "[SteamNetworkingManager] handleConnectionStatusChanged called, oldState=" 
+              << pInfo->m_eOldState << ", newState=" << pInfo->m_info.m_eState 
+              << ", conn=" << pInfo->m_hConn << std::endl;
+    
     std::lock_guard<std::mutex> lock(connectionsMutex);
     std::cout << "Connection status changed: " << pInfo->m_info.m_eState << " for connection " << pInfo->m_hConn << std::endl;
     if (pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally)
