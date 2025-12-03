@@ -66,14 +66,14 @@ public:
     /**
      * @brief 处理收到的心跳
      */
-    void handleHeartbeat(const HeartbeatPayload& heartbeat, HSteamNetConnection fromConn,
-                         CSteamID peerSteamID, const std::string& peerName);
+    void handleHeartbeat(const HeartbeatPayload& heartbeat, CSteamID peerSteamID,
+                         const std::string& peerName);
     
     /**
      * @brief 注册远程节点
      */
     void registerNode(const NodeID& nodeId, CSteamID steamId, uint32_t ipAddress,
-                      HSteamNetConnection conn, const std::string& name);
+                      const std::string& name);
     
     /**
      * @brief 注销远程节点
@@ -92,9 +92,9 @@ public:
     
     /**
      * @brief 检测数据包级别冲突
-     * @return 如果检测到冲突，返回需要强制释放的连接
+     * @return 如果检测到冲突，返回需要强制释放的 Steam ID
      */
-    HSteamNetConnection detectConflict(uint32_t sourceIP, const NodeID& senderNodeId);
+    bool detectConflict(uint32_t sourceIP, const NodeID& senderNodeId, CSteamID& outConflictingSteamID);
 
 private:
     void heartbeatLoop();

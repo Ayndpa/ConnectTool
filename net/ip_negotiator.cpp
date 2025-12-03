@@ -137,7 +137,7 @@ void IpNegotiator::checkTimeout() {
     }
     
     bool canClaim = true;
-    std::vector<HSteamNetConnection> nodesToForceRelease;
+    std::vector<CSteamID> nodesToForceRelease;
     
     for (const auto& conflict : conflicts) {
         // 检查活跃度：心跳是否过期
@@ -154,7 +154,7 @@ void IpNegotiator::checkTimeout() {
         // 比较 Node ID
         if (NodeIdentity::hasPriority(localNodeId_, conflict.nodeId)) {
             // 我的 Node ID 更大，我赢了，需要向对方发送强制释放
-            nodesToForceRelease.push_back(conflict.conn);
+            nodesToForceRelease.push_back(conflict.senderSteamID);
         } else {
             // 我输了，需要放弃这个 IP
             canClaim = false;
@@ -164,8 +164,8 @@ void IpNegotiator::checkTimeout() {
     
     if (canClaim) {
         // 发送强制释放给所有失败的节点
-        for (auto conn : nodesToForceRelease) {
-            sendForcedRelease(candidateIP_, conn);
+        for (auto steamID : nodesToForceRelease) {
+            sendForcedRelease(candidateIP_, steamID);
         }
         
         // 宣布成功
@@ -193,7 +193,7 @@ void IpNegotiator::checkTimeout() {
     }
 }
 
-void IpNegotiator::handleProbeRequest(const ProbeRequestPayload& request, HSteamNetConnection fromConn) {
+void IpNegotiator::handleProbeRequest(const ProbeRequestPayload& request, CSteamID senderSteamID) {
     uint32_t requestedIP = ntohl(request.ipAddress);
     
     bool shouldRespond = false;
@@ -229,13 +229,13 @@ void IpNegotiator::handleProbeRequest(const ProbeRequestPayload& request, HSteam
         
         sendCallback_(VpnMessageType::PROBE_RESPONSE,
                       reinterpret_cast<const uint8_t*>(&response),
-                      sizeof(response), fromConn, true);
+                      sizeof(response), senderSteamID, true);
         
         std::cout << "Sent conflict response for IP" << std::endl;
     }
 }
 
-void IpNegotiator::handleProbeResponse(const ProbeResponsePayload& response, HSteamNetConnection fromConn) {
+void IpNegotiator::handleProbeResponse(const ProbeResponsePayload& response, CSteamID senderSteamID) {
     if (state_ != NegotiationState::PROBING) return;
     
     uint32_t conflictIP = ntohl(response.ipAddress);
@@ -246,14 +246,14 @@ void IpNegotiator::handleProbeResponse(const ProbeResponsePayload& response, HSt
     ConflictInfo info;
     info.nodeId = response.nodeId;
     info.lastHeartbeatMs = response.lastHeartbeatMs;
-    info.conn = fromConn;
+    info.senderSteamID = senderSteamID;
     collectedConflicts_.push_back(info);
     
     std::cout << "Received conflict response from node " << NodeIdentity::toString(response.nodeId) << std::endl;
 }
 
-void IpNegotiator::handleAddressAnnounce(const AddressAnnouncePayload& announce, HSteamNetConnection fromConn,
-                                          CSteamID peerSteamID, const std::string& peerName) {
+void IpNegotiator::handleAddressAnnounce(const AddressAnnouncePayload& announce, CSteamID peerSteamID,
+                                          const std::string& peerName) {
     uint32_t announcedIP = ntohl(announce.ipAddress);
     
     std::cout << "Received address announce: " 
@@ -273,7 +273,7 @@ void IpNegotiator::handleAddressAnnounce(const AddressAnnouncePayload& announce,
             return;
         } else {
             // 我的 Node ID 更大，发送强制释放
-            sendForcedRelease(announcedIP, fromConn);
+            sendForcedRelease(announcedIP, peerSteamID);
             return;
         }
     }
@@ -282,7 +282,7 @@ void IpNegotiator::handleAddressAnnounce(const AddressAnnouncePayload& announce,
     markIPUsed(announcedIP);
 }
 
-void IpNegotiator::handleForcedRelease(const ForcedReleasePayload& release, HSteamNetConnection fromConn) {
+void IpNegotiator::handleForcedRelease(const ForcedReleasePayload& release, CSteamID senderSteamID) {
     uint32_t releasedIP = ntohl(release.ipAddress);
     
     // 检查是否需要释放
@@ -318,7 +318,7 @@ void IpNegotiator::sendAddressAnnounce() {
                        sizeof(payload), true);
 }
 
-void IpNegotiator::sendAddressAnnounceTo(HSteamNetConnection conn) {
+void IpNegotiator::sendAddressAnnounceTo(CSteamID targetSteamID) {
     if (!sendCallback_ || state_ != NegotiationState::STABLE || localIP_ == 0) return;
     
     AddressAnnouncePayload payload;
@@ -327,10 +327,10 @@ void IpNegotiator::sendAddressAnnounceTo(HSteamNetConnection conn) {
     
     sendCallback_(VpnMessageType::ADDRESS_ANNOUNCE,
                   reinterpret_cast<const uint8_t*>(&payload),
-                  sizeof(payload), conn, true);
+                  sizeof(payload), targetSteamID, true);
 }
 
-void IpNegotiator::sendForcedRelease(uint32_t ipAddress, HSteamNetConnection targetConn) {
+void IpNegotiator::sendForcedRelease(uint32_t ipAddress, CSteamID targetSteamID) {
     if (!sendCallback_) return;
     
     ForcedReleasePayload payload;
@@ -339,7 +339,7 @@ void IpNegotiator::sendForcedRelease(uint32_t ipAddress, HSteamNetConnection tar
     
     sendCallback_(VpnMessageType::FORCED_RELEASE,
                   reinterpret_cast<const uint8_t*>(&payload),
-                  sizeof(payload), targetConn, true);
+                  sizeof(payload), targetSteamID, true);
     
     std::cout << "Sent forced release" << std::endl;
 }

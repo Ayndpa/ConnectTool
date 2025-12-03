@@ -1,19 +1,16 @@
 #include "steam_message_handler.h"
 #include "steam_networking_manager.h"
 #include "steam_vpn_bridge.h"
+#include "net/vpn_protocol.h"
 #include <iostream>
 #include <cstring>
 #include <chrono>
 #include <steam_api.h>
-#include <isteamnetworkingsockets.h>
+#include <isteamnetworkingmessages.h>
 
-SteamMessageHandler::SteamMessageHandler(ISteamNetworkingSockets* interface, 
-                                         std::vector<HSteamNetConnection>& connections, 
-                                         std::mutex& connectionsMutex, 
+SteamMessageHandler::SteamMessageHandler(ISteamNetworkingMessages* interface, 
                                          SteamNetworkingManager* manager)
-    : m_pInterface_(interface)
-    , connections_(connections)
-    , connectionsMutex_(connectionsMutex)
+    : m_pMessagesInterface_(interface)
     , manager_(manager)
     , internalIoContext_(std::make_unique<asio::io_context>())
     , ioContext_(internalIoContext_.get())
@@ -105,46 +102,44 @@ void SteamMessageHandler::schedulePoll() {
 }
 
 void SteamMessageHandler::pollMessages() {
-    // 注意：不要在这里调用 RunCallbacks()！
-    // Steam 回调应该由主线程的 SteamAPI_RunCallbacks() 处理
-    // 在这里调用会导致死锁，因为回调中可能会获取 connectionsMutex_
+    if (!m_pMessagesInterface_) return;
     
-    // Receive messages
-    int totalMessages = 0;
-    std::vector<HSteamNetConnection> currentConnections;
-    {
-        std::lock_guard<std::mutex> lockConn(connectionsMutex_);
-        currentConnections = connections_;
-    }
+    // 从 ISteamNetworkingMessages 接收消息
+    ISteamNetworkingMessage* pIncomingMsgs[64];
+    int numMsgs = m_pMessagesInterface_->ReceiveMessagesOnChannel(VPN_CHANNEL, pIncomingMsgs, 64);
     
-    for (auto conn : currentConnections) {
-        ISteamNetworkingMessage* pIncomingMsgs[64];  // 增加到 64 条以提高吞吐量
-        int numMsgs = m_pInterface_->ReceiveMessagesOnConnection(conn, pIncomingMsgs, 64);
-        totalMessages += numMsgs;
-        
-        for (int i = 0; i < numMsgs; ++i) {
-            ISteamNetworkingMessage* pIncomingMsg = pIncomingMsgs[i];
-            const uint8_t* data = (const uint8_t*)pIncomingMsg->m_pData;
-            size_t size = pIncomingMsg->m_cbSize;
+    for (int i = 0; i < numMsgs; ++i) {
+        ISteamNetworkingMessage* pIncomingMsg = pIncomingMsgs[i];
+        const uint8_t* data = (const uint8_t*)pIncomingMsg->m_pData;
+        size_t size = pIncomingMsg->m_cbSize;
+        CSteamID senderSteamID = pIncomingMsg->m_identityPeer.GetSteamID();
 
-            // Check if this is a VPN message (first byte indicates message type)
-            // VpnMessageType enum values range from 1 to 7
-            if (size > 0 && data[0] >= 1 && data[0] <= 7) {
-                // This might be a VPN message, forward to VPN bridge
-                if (manager_) {
-                    SteamVpnBridge* bridge = manager_->getVpnBridge();
-                    if (bridge) {
-                        bridge->handleVpnMessage(data, size, conn);
-                    }
-                }
+        // Check if this is a VPN message
+        if (size >= sizeof(VpnMessageHeader)) {
+            VpnMessageType msgType = static_cast<VpnMessageType>(data[0]);
+            
+            // SESSION_HELLO 消息只是用于建立会话，不需要特殊处理
+            if (msgType == VpnMessageType::SESSION_HELLO) {
+                std::cout << "[SteamMessageHandler] Received SESSION_HELLO from " 
+                          << senderSteamID.ConvertToUint64() << std::endl;
+                pIncomingMsg->Release();
+                continue;
             }
             
-            pIncomingMsg->Release();
+            // Forward other VPN messages to VPN bridge
+            if (manager_) {
+                SteamVpnBridge* bridge = manager_->getVpnBridge();
+                if (bridge) {
+                    bridge->handleVpnMessage(data, size, senderSteamID);
+                }
+            }
         }
+        
+        pIncomingMsg->Release();
     }
     
     // Adaptive polling: 有消息时缩短间隔，无消息时逐渐增加间隔
-    if (totalMessages > 0) {
+    if (numMsgs > 0) {
         currentPollInterval_ = MIN_POLL_INTERVAL;
     } else {
         currentPollInterval_ = std::min(currentPollInterval_ + POLL_INCREMENT, MAX_POLL_INTERVAL);

@@ -121,8 +121,8 @@ void HeartbeatManager::checkExpiredLeases() {
     }
 }
 
-void HeartbeatManager::handleHeartbeat(const HeartbeatPayload& heartbeat, HSteamNetConnection fromConn,
-                                        CSteamID peerSteamID, const std::string& peerName) {
+void HeartbeatManager::handleHeartbeat(const HeartbeatPayload& heartbeat, CSteamID peerSteamID,
+                                        const std::string& peerName) {
     uint32_t heartbeatIP = ntohl(heartbeat.ipAddress);
     
     std::lock_guard<std::mutex> lock(nodeTableMutex_);
@@ -137,7 +137,6 @@ void HeartbeatManager::handleHeartbeat(const HeartbeatPayload& heartbeat, HSteam
         nodeInfo.steamId = peerSteamID;
         nodeInfo.ipAddress = heartbeatIP;
         nodeInfo.lastHeartbeat = std::chrono::steady_clock::now();
-        nodeInfo.conn = fromConn;
         nodeInfo.name = peerName;
         nodeInfo.isLocal = false;
         nodeTable_[heartbeat.nodeId] = nodeInfo;
@@ -146,7 +145,7 @@ void HeartbeatManager::handleHeartbeat(const HeartbeatPayload& heartbeat, HSteam
 }
 
 void HeartbeatManager::registerNode(const NodeID& nodeId, CSteamID steamId, uint32_t ipAddress,
-                                     HSteamNetConnection conn, const std::string& name) {
+                                     const std::string& name) {
     std::lock_guard<std::mutex> lock(nodeTableMutex_);
     
     NodeInfo nodeInfo;
@@ -154,7 +153,6 @@ void HeartbeatManager::registerNode(const NodeID& nodeId, CSteamID steamId, uint
     nodeInfo.steamId = steamId;
     nodeInfo.ipAddress = ipAddress;
     nodeInfo.lastHeartbeat = std::chrono::steady_clock::now();
-    nodeInfo.conn = conn;
     nodeInfo.name = name;
     nodeInfo.isLocal = (nodeId == localNodeId_);
     
@@ -188,7 +186,7 @@ std::map<NodeID, NodeInfo> HeartbeatManager::getAllNodes() const {
     return nodeTable_;
 }
 
-HSteamNetConnection HeartbeatManager::detectConflict(uint32_t sourceIP, const NodeID& senderNodeId) {
+bool HeartbeatManager::detectConflict(uint32_t sourceIP, const NodeID& senderNodeId, CSteamID& outConflictingSteamID) {
     std::lock_guard<std::mutex> lock(nodeTableMutex_);
     
     auto it = ipToNodeId_.find(sourceIP);
@@ -196,24 +194,24 @@ HSteamNetConnection HeartbeatManager::detectConflict(uint32_t sourceIP, const No
         // 发现冲突：同一个 IP 来自不同的 Node ID
         std::cout << "Packet-level conflict detected for IP" << std::endl;
         
-        // 比较 Node ID，返回优先级较低的节点连接
+        // 比较 Node ID，返回优先级较低的节点 Steam ID
         if (NodeIdentity::hasPriority(it->second, senderNodeId)) {
             // 原来记录的 Node ID 更大，新来的需要释放
             auto nodeIt = nodeTable_.find(senderNodeId);
             if (nodeIt != nodeTable_.end()) {
-                return nodeIt->second.conn;
+                outConflictingSteamID = nodeIt->second.steamId;
+                return true;
             }
         } else {
-            // 新来的 Node ID 更大，更新记录并返回原来的连接
+            // 新来的 Node ID 更大，更新记录并返回原来的 Steam ID
             auto nodeIt = nodeTable_.find(it->second);
-            HSteamNetConnection oldConn = k_HSteamNetConnection_Invalid;
             if (nodeIt != nodeTable_.end()) {
-                oldConn = nodeIt->second.conn;
+                outConflictingSteamID = nodeIt->second.steamId;
+                it->second = senderNodeId;
+                return true;
             }
-            it->second = senderNodeId;
-            return oldConn;
         }
     }
     
-    return k_HSteamNetConnection_Invalid;
+    return false;
 }

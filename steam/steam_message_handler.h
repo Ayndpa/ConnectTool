@@ -7,21 +7,19 @@
 #include <memory>
 #include <atomic>
 #include <steamnetworkingtypes.h>
-#include <isteamnetworkingsockets.h>
+#include <isteamnetworkingmessages.h>
 #include <asio.hpp>
 
 class SteamNetworkingManager;
 
 /**
- * @brief Steam 网络消息处理器（Asio 版本）
+ * @brief Steam 网络消息处理器（ISteamNetworkingMessages 版本）
  * 
- * 使用 Asio 定时器替代传统的 sleep 循环，实现更高效的消息轮询
+ * 使用 Asio 定时器实现高效的消息轮询，从 ISteamNetworkingMessages 接收消息
  */
 class SteamMessageHandler {
 public:
-    SteamMessageHandler(ISteamNetworkingSockets* interface, 
-                        std::vector<HSteamNetConnection>& connections, 
-                        std::mutex& connectionsMutex, 
+    SteamMessageHandler(ISteamNetworkingMessages* interface, 
                         SteamNetworkingManager* manager);
     ~SteamMessageHandler();
 
@@ -38,9 +36,7 @@ private:
     void pollMessages();
     void runInternalLoop();
 
-    ISteamNetworkingSockets* m_pInterface_;
-    std::vector<HSteamNetConnection>& connections_;
-    std::mutex& connectionsMutex_;
+    ISteamNetworkingMessages* m_pMessagesInterface_;
     SteamNetworkingManager* manager_;
 
     // Asio 相关
@@ -51,6 +47,9 @@ private:
     
     std::atomic<bool> running_;
     std::chrono::microseconds currentPollInterval_;
+    
+    // VPN 消息通道
+    static constexpr int VPN_CHANNEL = 0;
     
     static constexpr std::chrono::microseconds MIN_POLL_INTERVAL{100};    // 0.1ms
     static constexpr std::chrono::microseconds MAX_POLL_INTERVAL{1000};   // 1ms

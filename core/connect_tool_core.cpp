@@ -85,7 +85,7 @@ void ConnectToolCore::leaveLobby() {
         roomManager->leaveLobby();
     }
     if (steamManager) {
-        steamManager->disconnect();
+        steamManager->clearPeers();
     }
 }
 
@@ -147,11 +147,8 @@ ConnectToolCore::MemberConnectionInfo ConnectToolCore::getMemberConnectionInfo(c
     std::string relayInfo = "-";
 
     if (steamManager) {
-        HSteamNetConnection conn = steamManager->getConnectionForPeer(memberID);
-        if (conn != k_HSteamNetConnection_Invalid) {
-            ping = steamManager->getConnectionPing(conn);
-            relayInfo = steamManager->getConnectionRelayInfo(conn);
-        }
+        ping = steamManager->getPeerPing(memberID);
+        relayInfo = steamManager->getPeerConnectionType(memberID);
     }
     return {ping, relayInfo};
 }

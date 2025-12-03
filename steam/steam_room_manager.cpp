@@ -101,21 +101,21 @@ void SteamMatchmakingCallbacks::OnLobbyEntered(LobbyEnter_t *pCallback)
             );
         }
         
-        // Connect to all existing members in the lobby (except ourselves)
+        // 添加所有已存在的大厅成员为节点（使用 ISteamNetworkingMessages 无需手动连接）
         CSteamID mySteamID = SteamUser()->GetSteamID();
         
         int numMembers = SteamMatchmaking()->GetNumLobbyMembers(pCallback->m_ulSteamIDLobby);
-        std::cout << "Connecting to " << (numMembers - 1) << " lobby members..." << std::endl;
+        std::cout << "Adding " << (numMembers - 1) << " lobby members as peers..." << std::endl;
         
         for (int i = 0; i < numMembers; ++i)
         {
             CSteamID memberID = SteamMatchmaking()->GetLobbyMemberByIndex(pCallback->m_ulSteamIDLobby, i);
             
-            // Don't connect to ourselves
+            // 不添加自己
             if (memberID != mySteamID)
             {
-                std::cout << "Connecting to member " << memberID.ConvertToUint64() << std::endl;
-                manager_->connectToPeer(memberID);
+                std::cout << "Adding peer: " << memberID.ConvertToUint64() << std::endl;
+                manager_->addPeer(memberID);
             }
         }
     }
@@ -135,21 +135,24 @@ void SteamMatchmakingCallbacks::OnLobbyChatUpdate(LobbyChatUpdate_t *pCallback)
     {
         std::cout << "User " << affectedUser.ConvertToUint64() << " entered lobby" << std::endl;
         
-        // If it's not us and we're already in the lobby, connect to the new member
+        // 新成员加入，将其添加为节点
         if (affectedUser != mySteamID && roomManager_->getCurrentLobby().IsValid())
         {
-            std::cout << "New member joined: " << affectedUser.ConvertToUint64() << " (Waiting for them to connect)" << std::endl;
-            // manager_->connectToPeer(affectedUser);
+            std::cout << "Adding new peer: " << affectedUser.ConvertToUint64() << std::endl;
+            manager_->addPeer(affectedUser);
         }
     }
     else if (pCallback->m_rgfChatMemberStateChange & k_EChatMemberStateChangeLeft)
     {
         std::cout << "User " << affectedUser.ConvertToUint64() << " left lobby" << std::endl;
-        // Connection cleanup will be handled by Steam networking callbacks
+        // 移除离开的节点
+        manager_->removePeer(affectedUser);
     }
     else if (pCallback->m_rgfChatMemberStateChange & k_EChatMemberStateChangeDisconnected)
     {
         std::cout << "User " << affectedUser.ConvertToUint64() << " disconnected from lobby" << std::endl;
+        // 移除断开连接的节点
+        manager_->removePeer(affectedUser);
     }
 }
 
@@ -179,14 +182,8 @@ bool SteamRoomManager::createLobby()
         return false;
     }
     
-    // Create P2P listen socket
-    networkingManager_->getListenSock() = networkingManager_->getInterface()->CreateListenSocketP2P(0, 0, nullptr);
-    if (networkingManager_->getListenSock() == k_HSteamListenSocket_Invalid)
-    {
-        std::cerr << "Failed to create listen socket" << std::endl;
-        return false;
-    }
-    std::cout << "Created P2P listen socket" << std::endl;
+    // 使用 ISteamNetworkingMessages 不需要创建 listen socket
+    std::cout << "Creating lobby (using ISteamNetworkingMessages, no listen socket needed)" << std::endl;
     
     // Register the call result
     steamMatchmakingCallbacks->m_CallResultLobbyCreated.Set(hSteamAPICall, steamMatchmakingCallbacks, &SteamMatchmakingCallbacks::OnLobbyCreated);
@@ -200,9 +197,8 @@ void SteamRoomManager::leaveLobby()
         SteamMatchmaking()->LeaveLobby(currentLobby);
         currentLobby = k_steamIDNil;
         
-        // Disconnect all P2P connections and close listen socket
-        // This properly cleans up all network state
-        networkingManager_->disconnect();
+        // 清理所有节点
+        networkingManager_->clearPeers();
 
         // 【新增】自动关闭VPN
         if (networkingManager_->getVpnBridge()) {
@@ -231,18 +227,8 @@ bool SteamRoomManager::searchLobbies()
 
 bool SteamRoomManager::joinLobby(CSteamID lobbyID)
 {
-    // Create P2P listen socket BEFORE joining lobby
-    // This is needed to receive incoming connections from other lobby members
-    if (networkingManager_->getListenSock() == k_HSteamListenSocket_Invalid)
-    {
-        networkingManager_->getListenSock() = networkingManager_->getInterface()->CreateListenSocketP2P(0, 0, nullptr);
-        if (networkingManager_->getListenSock() == k_HSteamListenSocket_Invalid)
-        {
-            std::cerr << "Failed to create listen socket for joining lobby" << std::endl;
-            return false;
-        }
-        std::cout << "Created P2P listen socket for joining lobby" << std::endl;
-    }
+    // 使用 ISteamNetworkingMessages 不需要创建 listen socket
+    std::cout << "Joining lobby (using ISteamNetworkingMessages, no listen socket needed)" << std::endl;
     
     SteamAPICall_t hCall = SteamMatchmaking()->JoinLobby(lobbyID);
     if (hCall == k_uAPICallInvalid)
@@ -250,7 +236,7 @@ bool SteamRoomManager::joinLobby(CSteamID lobbyID)
         std::cerr << "Failed to join lobby" << std::endl;
         return false;
     }
-    // Connection will be handled by callback
+    // 成员将在回调中处理
     return true;
 }
 

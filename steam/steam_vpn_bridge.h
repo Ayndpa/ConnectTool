@@ -10,7 +10,7 @@
 #include <string>
 #include <cstdint>
 #include <steam_api.h>
-#include <isteamnetworkingsockets.h>
+#include <isteamnetworkingmessages.h>
 
 #include "../tun/tun_interface.h"
 #include "../net/vpn_protocol.h"
@@ -21,10 +21,10 @@
 class SteamNetworkingManager;
 
 /**
- * @brief Steam VPN桥接器
+ * @brief Steam VPN桥接器（ISteamNetworkingMessages 版本）
  * 
  * 负责在虚拟网卡和Steam网络之间转发IP数据包
- * 使用分布式 IP 协商协议自动分配 IP 地址
+ * 使用 ISteamNetworkingMessages 实现无连接的消息传递
  */
 class SteamVpnBridge {
 public:
@@ -68,19 +68,18 @@ public:
     std::map<uint32_t, RouteEntry> getRoutingTable() const;
 
     /**
-     * @brief 处理来自Steam的VPN消息
+     * @brief 处理来自Steam的VPN消息（使用 SteamID 标识发送者）
      * @param data 消息数据
      * @param length 消息长度
-     * @param fromConn 来源连接
+     * @param senderSteamID 发送者的 Steam ID
      */
-    void handleVpnMessage(const uint8_t* data, size_t length, HSteamNetConnection fromConn);
+    void handleVpnMessage(const uint8_t* data, size_t length, CSteamID senderSteamID);
 
     /**
      * @brief 当新用户加入时
      * @param steamID 用户的Steam ID
-     * @param conn 连接句柄
      */
-    void onUserJoined(CSteamID steamID, HSteamNetConnection conn);
+    void onUserJoined(CSteamID steamID);
 
     /**
      * @brief 当用户离开时清理路由
@@ -119,9 +118,9 @@ private:
     // 判断是否是广播地址
     bool isBroadcastAddress(uint32_t ip) const;
     
-    // 发送 VPN 消息
+    // 发送 VPN 消息（使用 ISteamNetworkingMessages）
     void sendVpnMessage(VpnMessageType type, const uint8_t* payload, size_t payloadLength, 
-                        HSteamNetConnection conn, bool reliable = true);
+                        CSteamID targetSteamID, bool reliable = true);
     void broadcastVpnMessage(VpnMessageType type, const uint8_t* payload, size_t payloadLength, 
                              bool reliable = true);
     
@@ -133,12 +132,12 @@ private:
     
     // 更新路由表
     void updateRoute(const NodeID& nodeId, CSteamID steamId, uint32_t ipAddress,
-                     HSteamNetConnection conn, const std::string& name);
+                     const std::string& name);
     void removeRoute(uint32_t ipAddress);
     
     // 发送路由更新
     void broadcastRouteUpdate();
-    void sendRouteUpdateTo(HSteamNetConnection conn);
+    void sendRouteUpdateTo(CSteamID targetSteamID);
 
     // Steam网络管理器
     SteamNetworkingManager* steamManager_;

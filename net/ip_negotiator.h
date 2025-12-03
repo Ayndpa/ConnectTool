@@ -25,14 +25,14 @@ enum class NegotiationState {
 struct ConflictInfo {
     NodeID nodeId;
     int64_t lastHeartbeatMs;
-    HSteamNetConnection conn;
+    CSteamID senderSteamID;
 };
 
 /**
- * @brief 消息发送回调
+ * @brief 消息发送回调（使用 CSteamID）
  */
 using VpnSendMessageCallback = std::function<void(VpnMessageType type, const uint8_t* payload, 
-                                                size_t length, HSteamNetConnection conn, bool reliable)>;
+                                                size_t length, CSteamID targetSteamID, bool reliable)>;
 using VpnBroadcastMessageCallback = std::function<void(VpnMessageType type, const uint8_t* payload, 
                                                      size_t length, bool reliable)>;
 
@@ -42,7 +42,7 @@ using VpnBroadcastMessageCallback = std::function<void(VpnMessageType type, cons
 using NegotiationSuccessCallback = std::function<void(uint32_t ipAddress, const NodeID& nodeId)>;
 
 /**
- * @brief 分布式 IP 协商器
+ * @brief 分布式 IP 协商器（ISteamNetworkingMessages 版本）
  * 
  * 实现基于 Node ID 的 P2P IP 地址分配协议
  */
@@ -81,23 +81,23 @@ public:
     /**
      * @brief 处理探测请求
      */
-    void handleProbeRequest(const ProbeRequestPayload& request, HSteamNetConnection fromConn);
+    void handleProbeRequest(const ProbeRequestPayload& request, CSteamID senderSteamID);
     
     /**
      * @brief 处理探测响应
      */
-    void handleProbeResponse(const ProbeResponsePayload& response, HSteamNetConnection fromConn);
+    void handleProbeResponse(const ProbeResponsePayload& response, CSteamID senderSteamID);
     
     /**
      * @brief 处理地址宣布
      */
-    void handleAddressAnnounce(const AddressAnnouncePayload& announce, HSteamNetConnection fromConn,
-                               CSteamID peerSteamID, const std::string& peerName);
+    void handleAddressAnnounce(const AddressAnnouncePayload& announce, CSteamID peerSteamID,
+                               const std::string& peerName);
     
     /**
      * @brief 处理强制释放
      */
-    void handleForcedRelease(const ForcedReleasePayload& release, HSteamNetConnection fromConn);
+    void handleForcedRelease(const ForcedReleasePayload& release, CSteamID senderSteamID);
     
     /**
      * @brief 获取当前状态
@@ -125,9 +125,9 @@ public:
     void sendAddressAnnounce();
     
     /**
-     * @brief 向特定连接发送地址宣布
+     * @brief 向特定用户发送地址宣布
      */
-    void sendAddressAnnounceTo(HSteamNetConnection conn);
+    void sendAddressAnnounceTo(CSteamID targetSteamID);
     
     /**
      * @brief 标记 IP 为已使用（用于避免冲突）
@@ -150,7 +150,7 @@ private:
     void sendProbeRequest();
     
     // 发送强制释放
-    void sendForcedRelease(uint32_t ipAddress, HSteamNetConnection targetConn);
+    void sendForcedRelease(uint32_t ipAddress, CSteamID targetSteamID);
     
     // 本地信息
     NodeID localNodeId_;

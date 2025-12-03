@@ -1,21 +1,40 @@
 #include "steam_networking_manager.h"
 #include "steam_vpn_bridge.h"
 #include "config/config_manager.h"
+#include "net/vpn_protocol.h"
 #include <iostream>
 #include <algorithm>
 
 SteamNetworkingManager *SteamNetworkingManager::instance = nullptr;
 
-// STEAM_CALLBACK 回调函数 - 当连接状态改变时由 SteamAPI_RunCallbacks() 调用
-void SteamNetworkingManager::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pCallback)
+// STEAM_CALLBACK 回调函数 - 当有新的会话请求时
+void SteamNetworkingManager::OnSessionRequest(SteamNetworkingMessagesSessionRequest_t *pCallback)
 {
-    handleConnectionStatusChanged(pCallback);
+    CSteamID remoteSteamID = pCallback->m_identityRemote.GetSteamID();
+    std::cout << "[SteamNetworkingManager] Session request from " << remoteSteamID.ConvertToUint64() << std::endl;
+    
+    // 自动接受来自已知节点的会话请求
+    {
+        std::lock_guard<std::mutex> lock(peersMutex_);
+        if (peers_.find(remoteSteamID) != peers_.end()) {
+            m_pMessagesInterface->AcceptSessionWithUser(pCallback->m_identityRemote);
+            std::cout << "[SteamNetworkingManager] Accepted session from known peer" << std::endl;
+        }
+    }
+}
+
+// STEAM_CALLBACK 回调函数 - 当会话失败时
+void SteamNetworkingManager::OnSessionFailed(SteamNetworkingMessagesSessionFailed_t *pCallback)
+{
+    CSteamID remoteSteamID = pCallback->m_info.m_identityRemote.GetSteamID();
+    std::cout << "[SteamNetworkingManager] Session failed with " << remoteSteamID.ConvertToUint64() 
+              << ": " << pCallback->m_info.m_szEndDebug << std::endl;
 }
 
 SteamNetworkingManager::SteamNetworkingManager()
-    : m_pInterface(nullptr), hListenSock(k_HSteamListenSocket_Invalid), g_isConnected(false),
-      g_hConnection(k_HSteamNetConnection_Invalid),
-      messageHandler_(nullptr), vpnBridge_(nullptr), hostPing_(0)
+    : m_pMessagesInterface(nullptr)
+    , messageHandler_(nullptr)
+    , vpnBridge_(nullptr)
 {
 }
 
@@ -44,35 +63,15 @@ bool SteamNetworkingManager::initialize()
                                                        std::cerr << "[SteamNet Error] " << pszMsg << std::endl;
                                                    });
 
-    int32 logLevel = k_ESteamNetworkingSocketsDebugOutputType_Verbose;
-    SteamNetworkingUtils()->SetConfigValue(
-        k_ESteamNetworkingConfig_LogLevel_P2PRendezvous,
-        k_ESteamNetworkingConfig_Global,
-        0,
-        k_ESteamNetworkingConfig_Int32,
-        &logLevel);
-
     // 允许 P2P (ICE) 直连
-    // 默认情况下 Steam 可能会保守地只允许 LAN，这里设置为 "All" 允许公网 P2P
     int32 nIceEnable = k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Public;
     SteamNetworkingUtils()->SetConfigValue(
         k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,
-        k_ESteamNetworkingConfig_Global, // <--- 关键：作用域选 Global
-        0,                               // Global 时此参数填 0
-        k_ESteamNetworkingConfig_Int32,
-        &nIceEnable);
-
-    // Allow connections from IPs without authentication
-    int32 allowWithoutAuth = 2;
-    SteamNetworkingUtils()->SetConfigValue(
-        k_ESteamNetworkingConfig_IP_AllowWithoutAuth,
         k_ESteamNetworkingConfig_Global,
         0,
         k_ESteamNetworkingConfig_Int32,
-        &allowWithoutAuth);
+        &nIceEnable);
 
-    // ============ 带宽优化配置 ============
-    // 根据 Steam 文档：SendRateMin 和 SendRateMax 应该设置为相同的值来强制使用特定速率
     // 使用配置管理器中的设置
     const auto& config = ConfigManager::instance().getConfig();
     int32 sendRate = config.networking.send_rate_mb * 1024 * 1024;  // MB/s -> bytes/s
@@ -91,8 +90,8 @@ bool SteamNetworkingManager::initialize()
         k_ESteamNetworkingConfig_Int32,
         &sendRate);
 
-    // 增大发送缓冲区大小（使用配置值）
-    int32 sendBufferSize = config.networking.send_buffer_size_mb * 1024 * 1024; // MB -> bytes
+    // 增大发送缓冲区大小
+    int32 sendBufferSize = config.networking.send_buffer_size_mb * 1024 * 1024;
     SteamNetworkingUtils()->SetConfigValue(
         k_ESteamNetworkingConfig_SendBufferSize,
         k_ESteamNetworkingConfig_Global,
@@ -100,8 +99,8 @@ bool SteamNetworkingManager::initialize()
         k_ESteamNetworkingConfig_Int32,
         &sendBufferSize);
 
-    // 禁用 Nagle 算法以减少延迟（对于实时 VPN 流量很重要）
-    int32 nagleTime = config.networking.nagle_time; // 0 表示禁用 Nagle
+    // 禁用 Nagle 算法以减少延迟
+    int32 nagleTime = config.networking.nagle_time;
     SteamNetworkingUtils()->SetConfigValue(
         k_ESteamNetworkingConfig_NagleTime,
         k_ESteamNetworkingConfig_Global,
@@ -113,122 +112,196 @@ bool SteamNetworkingManager::initialize()
               << (sendRate / 1024 / 1024) << " MB/s, SendBufferSize=" 
               << (sendBufferSize / 1024 / 1024) << " MB" << std::endl;
 
-    // Create callbacks after Steam API init
+    // 初始化 relay 网络访问
     SteamNetworkingUtils()->InitRelayNetworkAccess();
-    // 注意：不再使用 SetGlobalCallback，而是使用 STEAM_CALLBACK 宏
-    // STEAM_CALLBACK 会自动在 SteamAPI_RunCallbacks() 时调度回调
-    std::cout << "[SteamNetworkingManager] Using STEAM_CALLBACK for connection status changes" << std::endl;
 
-    m_pInterface = SteamNetworkingSockets();
+    // 获取 ISteamNetworkingMessages 接口
+    m_pMessagesInterface = SteamNetworkingMessages();
+    if (!m_pMessagesInterface)
+    {
+        std::cerr << "Failed to get ISteamNetworkingMessages interface" << std::endl;
+        return false;
+    }
 
     // Initialize message handler
-    messageHandler_ = new SteamMessageHandler(m_pInterface, connections, connectionsMutex, this);
+    messageHandler_ = new SteamMessageHandler(m_pMessagesInterface, this);
 
-    // Check if callbacks are registered
-    std::cout << "Steam Networking Manager initialized successfully" << std::endl;
+    std::cout << "[SteamNetworkingManager] Steam Networking Manager initialized with ISteamNetworkingMessages" << std::endl;
 
     return true;
 }
 
 void SteamNetworkingManager::shutdown()
 {
-    if (g_hConnection != k_HSteamNetConnection_Invalid)
+    // 关闭所有会话
     {
-        m_pInterface->CloseConnection(g_hConnection, 0, nullptr, false);
+        std::lock_guard<std::mutex> lock(peersMutex_);
+        for (const auto& peerID : peers_) {
+            SteamNetworkingIdentity identity;
+            identity.SetSteamID(peerID);
+            if (m_pMessagesInterface) {
+                m_pMessagesInterface->CloseSessionWithUser(identity);
+            }
+        }
+        peers_.clear();
     }
-    if (hListenSock != k_HSteamListenSocket_Invalid)
-    {
-        m_pInterface->CloseListenSocket(hListenSock);
-    }
+    
     SteamAPI_Shutdown();
 }
 
-bool SteamNetworkingManager::connectToPeer(CSteamID peerID)
+bool SteamNetworkingManager::sendMessageToUser(CSteamID peerID, const void* data, uint32_t size, int flags)
 {
-    // Check if already connected to this peer
-    {
-        std::lock_guard<std::mutex> lock(connectionsMutex);
-        if (peerConnections_.find(peerID) != peerConnections_.end())
-        {
-            std::cout << "Already connected to peer " << peerID.ConvertToUint64() << std::endl;
-            return true;
-        }
-    }
-    
-    // Don't connect to ourselves
-    if (peerID == SteamUser()->GetSteamID())
-    {
-        return false;
-    }
+    if (!m_pMessagesInterface) return false;
     
     SteamNetworkingIdentity identity;
     identity.SetSteamID(peerID);
+    
+    EResult result = m_pMessagesInterface->SendMessageToUser(identity, data, size, flags, VPN_CHANNEL);
+    return result == k_EResultOK;
+}
 
-    HSteamNetConnection conn = m_pInterface->ConnectP2P(identity, 0, 0, nullptr);
-
-    if (conn != k_HSteamNetConnection_Invalid)
-    {
-        std::cout << "Attempting to connect to peer " << peerID.ConvertToUint64() << std::endl;
-        
-        // Store connection temporarily (will be properly added in callback)
-        std::lock_guard<std::mutex> lock(connectionsMutex);
-        peerConnections_[peerID] = conn;
-        
-        // Set as main connection if this is the first connection
-        if (g_hConnection == k_HSteamNetConnection_Invalid)
-        {
-            g_hConnection = conn;
-        }
-        
-        return true;
-    }
-    else
-    {
-        std::cerr << "Failed to initiate connection to peer " << peerID.ConvertToUint64() << std::endl;
-        return false;
+void SteamNetworkingManager::broadcastMessage(const void* data, uint32_t size, int flags)
+{
+    if (!m_pMessagesInterface) return;
+    
+    std::lock_guard<std::mutex> lock(peersMutex_);
+    for (const auto& peerID : peers_) {
+        SteamNetworkingIdentity identity;
+        identity.SetSteamID(peerID);
+        m_pMessagesInterface->SendMessageToUser(identity, data, size, flags, VPN_CHANNEL);
     }
 }
 
-void SteamNetworkingManager::disconnect()
+void SteamNetworkingManager::addPeer(CSteamID peerID)
 {
-    std::lock_guard<std::mutex> lock(connectionsMutex);
+    // 不添加自己
+    if (peerID == SteamUser()->GetSteamID()) return;
     
-    // Close client connection
-    if (g_hConnection != k_HSteamNetConnection_Invalid)
+    bool isNewPeer = false;
     {
-        m_pInterface->CloseConnection(g_hConnection, 0, nullptr, false);
-        g_hConnection = k_HSteamNetConnection_Invalid;
+        std::lock_guard<std::mutex> lock(peersMutex_);
+        isNewPeer = peers_.insert(peerID).second;
     }
     
-    // Close all peer connections
-    for (auto& pair : peerConnections_)
-    {
-        if (pair.second != k_HSteamNetConnection_Invalid)
-        {
-            m_pInterface->CloseConnection(pair.second, 0, nullptr, false);
+    if (isNewPeer) {
+        std::cout << "[SteamNetworkingManager] Added peer: " << peerID.ConvertToUint64() << std::endl;
+        
+        // 主动发送 SESSION_HELLO 消息来初始化 P2P 会话
+        // 这会触发 ISteamNetworkingMessages 建立底层连接
+        VpnMessageHeader helloMsg;
+        helloMsg.type = VpnMessageType::SESSION_HELLO;
+        helloMsg.length = 0;
+        
+        SteamNetworkingIdentity identity;
+        identity.SetSteamID(peerID);
+        
+        // 使用可靠发送 + 自动重启断开的会话
+        int flags = k_nSteamNetworkingSend_Reliable | k_nSteamNetworkingSend_AutoRestartBrokenSession;
+        EResult result = m_pMessagesInterface->SendMessageToUser(identity, &helloMsg, sizeof(helloMsg), flags, VPN_CHANNEL);
+        
+        if (result == k_EResultOK) {
+            std::cout << "[SteamNetworkingManager] Sent SESSION_HELLO to " << peerID.ConvertToUint64() << std::endl;
+        } else {
+            std::cout << "[SteamNetworkingManager] Failed to send SESSION_HELLO to " << peerID.ConvertToUint64() 
+                      << ", result: " << result << std::endl;
+        }
+        
+        // 通知 VPN bridge
+        if (vpnBridge_) {
+            vpnBridge_->onUserJoined(peerID);
         }
     }
-    peerConnections_.clear();
-    
-    // Close all host connections
-    for (auto conn : connections)
-    {
-        m_pInterface->CloseConnection(conn, 0, nullptr, false);
+}
+
+void SteamNetworkingManager::removePeer(CSteamID peerID)
+{
+    std::lock_guard<std::mutex> lock(peersMutex_);
+    if (peers_.erase(peerID) > 0) {
+        std::cout << "[SteamNetworkingManager] Removed peer: " << peerID.ConvertToUint64() << std::endl;
+        
+        // 关闭会话
+        SteamNetworkingIdentity identity;
+        identity.SetSteamID(peerID);
+        if (m_pMessagesInterface) {
+            m_pMessagesInterface->CloseSessionWithUser(identity);
+        }
+        
+        // 通知 VPN bridge
+        if (vpnBridge_) {
+            vpnBridge_->onUserLeft(peerID);
+        }
     }
-    connections.clear();
-    
-    // Close listen socket
-    if (hListenSock != k_HSteamListenSocket_Invalid)
-    {
-        m_pInterface->CloseListenSocket(hListenSock);
-        hListenSock = k_HSteamListenSocket_Invalid;
+}
+
+void SteamNetworkingManager::clearPeers()
+{
+    std::lock_guard<std::mutex> lock(peersMutex_);
+    for (const auto& peerID : peers_) {
+        SteamNetworkingIdentity identity;
+        identity.SetSteamID(peerID);
+        if (m_pMessagesInterface) {
+            m_pMessagesInterface->CloseSessionWithUser(identity);
+        }
+        
+        if (vpnBridge_) {
+            vpnBridge_->onUserLeft(peerID);
+        }
     }
+    peers_.clear();
+    std::cout << "[SteamNetworkingManager] Cleared all peers" << std::endl;
+}
+
+std::set<CSteamID> SteamNetworkingManager::getPeers() const
+{
+    std::lock_guard<std::mutex> lock(peersMutex_);
+    return peers_;
+}
+
+int SteamNetworkingManager::getPeerPing(CSteamID peerID) const
+{
+    if (!m_pMessagesInterface) return -1;
     
-    // Reset state
-    g_isConnected = false;
-    hostPing_ = 0;
+    SteamNetworkingIdentity identity;
+    identity.SetSteamID(peerID);
     
-    std::cout << "Disconnected from network" << std::endl;
+    SteamNetConnectionRealTimeStatus_t status;
+    ESteamNetworkingConnectionState state = m_pMessagesInterface->GetSessionConnectionInfo(identity, nullptr, &status);
+    
+    if (state == k_ESteamNetworkingConnectionState_Connected) {
+        return status.m_nPing;
+    }
+    return -1;
+}
+
+bool SteamNetworkingManager::isPeerConnected(CSteamID peerID) const
+{
+    if (!m_pMessagesInterface) return false;
+    
+    SteamNetworkingIdentity identity;
+    identity.SetSteamID(peerID);
+    
+    ESteamNetworkingConnectionState state = m_pMessagesInterface->GetSessionConnectionInfo(identity, nullptr, nullptr);
+    return state == k_ESteamNetworkingConnectionState_Connected;
+}
+
+std::string SteamNetworkingManager::getPeerConnectionType(CSteamID peerID) const
+{
+    if (!m_pMessagesInterface) return "N/A";
+    
+    SteamNetworkingIdentity identity;
+    identity.SetSteamID(peerID);
+    
+    SteamNetConnectionInfo_t info;
+    ESteamNetworkingConnectionState state = m_pMessagesInterface->GetSessionConnectionInfo(identity, &info, nullptr);
+    
+    if (state == k_ESteamNetworkingConnectionState_Connected) {
+        if (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) {
+            return "中继";
+        } else {
+            return "直连";
+        }
+    }
+    return "N/A";
 }
 
 void SteamNetworkingManager::startMessageHandler()
@@ -244,161 +317,5 @@ void SteamNetworkingManager::stopMessageHandler()
     if (messageHandler_)
     {
         messageHandler_->stop();
-    }
-}
-
-int SteamNetworkingManager::getConnectionPing(HSteamNetConnection conn) const
-{
-    SteamNetConnectionRealTimeStatus_t status;
-    if (m_pInterface->GetConnectionRealTimeStatus(conn, &status, 0, nullptr))
-    {
-        return status.m_nPing;
-    }
-    return 0;
-}
-
-std::string SteamNetworkingManager::getConnectionRelayInfo(HSteamNetConnection conn) const
-{
-    SteamNetConnectionInfo_t info;
-    if (m_pInterface->GetConnectionInfo(conn, &info))
-    {
-        // Check if connection is using relay
-        if (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed)
-        {
-            return "中继";
-        }
-        else
-        {
-            return "直连";
-        }
-    }
-    return "N/A";
-}
-
-HSteamNetConnection SteamNetworkingManager::getConnectionForPeer(CSteamID peerID) const
-{
-    std::lock_guard<std::mutex> lock(connectionsMutex);
-    auto it = peerConnections_.find(peerID);
-    if (it != peerConnections_.end())
-    {
-        return it->second;
-    }
-    return k_HSteamNetConnection_Invalid;
-}
-
-std::map<CSteamID, HSteamNetConnection> SteamNetworkingManager::getAllPeerConnections() const
-{
-    std::lock_guard<std::mutex> lock(connectionsMutex);
-    return peerConnections_;
-}
-
-void SteamNetworkingManager::handleConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t *pInfo)
-{
-    std::lock_guard<std::mutex> lock(connectionsMutex);
-    if (pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally)
-    {
-        std::cerr << "Connection failed: " << pInfo->m_info.m_szEndDebug << std::endl;
-    }
-    if (pInfo->m_eOldState == k_ESteamNetworkingConnectionState_None && pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_Connecting)
-    {
-        m_pInterface->AcceptConnection(pInfo->m_hConn);
-        CSteamID remoteSteamID = pInfo->m_info.m_identityRemote.GetSteamID();
-        
-        connections.push_back(pInfo->m_hConn);
-        peerConnections_[remoteSteamID] = pInfo->m_hConn;
-        
-        // Set as main connection if this is the first connection
-        if (g_hConnection == k_HSteamNetConnection_Invalid)
-        {
-            g_hConnection = pInfo->m_hConn;
-        }
-        
-        g_isConnected = true;
-        std::cout << "Accepted incoming connection from " << remoteSteamID.ConvertToUint64() << std::endl;
-        // Log connection info
-        SteamNetConnectionInfo_t info;
-        SteamNetConnectionRealTimeStatus_t status;
-        if (m_pInterface->GetConnectionInfo(pInfo->m_hConn, &info) && m_pInterface->GetConnectionRealTimeStatus(pInfo->m_hConn, &status, 0, nullptr))
-        {
-            std::cout << "Incoming connection details: ping=" << status.m_nPing << "ms, relay=" << (info.m_idPOPRelay != 0 ? "yes" : "no") << std::endl;
-        }
-        
-        // Notify VPN bridge of new user
-        if (vpnBridge_) {
-            vpnBridge_->onUserJoined(remoteSteamID, pInfo->m_hConn);
-        }
-    }
-    else if (pInfo->m_eOldState == k_ESteamNetworkingConnectionState_Connecting && pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_Connected)
-    {
-        g_isConnected = true;
-        CSteamID remoteSteamID = pInfo->m_info.m_identityRemote.GetSteamID();
-        std::cout << "Connected to peer " << remoteSteamID.ConvertToUint64() << std::endl;
-        
-        // Add to connections if not already there
-        auto it = std::find(connections.begin(), connections.end(), pInfo->m_hConn);
-        if (it == connections.end())
-        {
-            connections.push_back(pInfo->m_hConn);
-        }
-        
-        // Update peer connections map
-        // Update peer connections map
-        peerConnections_[remoteSteamID] = pInfo->m_hConn;
-        
-        // Log connection info
-        SteamNetConnectionInfo_t info;
-        SteamNetConnectionRealTimeStatus_t status;
-        if (m_pInterface->GetConnectionInfo(pInfo->m_hConn, &info) && m_pInterface->GetConnectionRealTimeStatus(pInfo->m_hConn, &status, 0, nullptr))
-        {
-            // Update host ping if this is the main connection
-            if (pInfo->m_hConn == g_hConnection)
-            {
-                hostPing_ = status.m_nPing;
-            }
-            std::cout << "Outgoing connection details: ping=" << status.m_nPing << "ms, relay=" << (info.m_idPOPRelay != 0 ? "yes" : "no") << std::endl;
-        }
-
-        // Notify VPN bridge of new user (Outgoing connection)
-        if (vpnBridge_) {
-            vpnBridge_->onUserJoined(remoteSteamID, pInfo->m_hConn);
-        }
-    }
-    else if (pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ClosedByPeer || pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally)
-    {
-        CSteamID remoteSteamID = pInfo->m_info.m_identityRemote.GetSteamID();
-        
-        // Notify VPN bridge of user leaving
-        if (vpnBridge_) {
-            vpnBridge_->onUserLeft(remoteSteamID);
-        }
-        
-        // Remove from connections
-        auto it = std::find(connections.begin(), connections.end(), pInfo->m_hConn);
-        if (it != connections.end())
-        {
-            connections.erase(it);
-        }
-        
-        // Remove from peer connections map
-        auto peerIt = peerConnections_.find(remoteSteamID);
-        if (peerIt != peerConnections_.end())
-        {
-            peerConnections_.erase(peerIt);
-        }
-        
-        // Check if we still have connections
-        if (connections.empty())
-        {
-            g_isConnected = false;
-            g_hConnection = k_HSteamNetConnection_Invalid;
-            hostPing_ = 0;
-        }
-        else if (pInfo->m_hConn == g_hConnection)
-        {
-            // Main connection closed, switch to another if available
-            g_hConnection = connections.empty() ? k_HSteamNetConnection_Invalid : connections[0];
-        }
-        
-        std::cout << "Connection closed with peer " << remoteSteamID.ConvertToUint64() << std::endl;
     }
 }

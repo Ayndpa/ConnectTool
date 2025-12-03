@@ -44,7 +44,10 @@ enum class VpnMessageType : uint8_t {
     ADDRESS_ANNOUNCE = 12,      // 地址宣布
     FORCED_RELEASE = 13,        // 强制释放指令
     HEARTBEAT = 14,             // 心跳/续租包
-    HEARTBEAT_ACK = 15          // 心跳确认
+    HEARTBEAT_ACK = 15,         // 心跳确认
+    
+    // 会话管理消息
+    SESSION_HELLO = 20          // 会话初始化消息（用于建立 P2P 连接）
 };
 
 // ============================================================================
@@ -125,7 +128,6 @@ struct NodeInfo {
     CSteamID steamId;                                   // Steam ID
     uint32_t ipAddress;                                 // 分配的 IP 地址
     std::chrono::steady_clock::time_point lastHeartbeat; // 最后心跳时间
-    HSteamNetConnection conn;                           // 连接句柄
     std::string name;                                   // 用户名
     bool isLocal;                                       // 是否是本机
     
@@ -145,11 +147,10 @@ struct NodeInfo {
 };
 
 /**
- * @brief IP路由表项
+ * @brief IP路由表项（ISteamNetworkingMessages 版本，无需连接句柄）
  */
 struct RouteEntry {
     CSteamID steamID;           // 对应的Steam ID
-    HSteamNetConnection conn;   // 对应的Steam连接
     uint32_t ipAddress;         // IP地址（主机字节序）
     std::string name;           // 用户名
     bool isLocal;               // 是否是本机
