@@ -14,11 +14,16 @@ void SteamNetworkingManager::OnSessionRequest(SteamNetworkingMessagesSessionRequ
     CSteamID remoteSteamID = pCallback->m_identityRemote.GetSteamID();
     std::cout << "[SteamNetworkingManager] Session request from " << remoteSteamID.ConvertToUint64() << std::endl;
     
-    // 自动接受来自房间成员的会话请求
+    // 始终接受会话请求
+    // 注意：即使请求者不在当前已知的房间成员列表中也要接受，
+    // 因为成员列表同步可能存在延迟，或者对方先发起了连接请求
+    m_pMessagesInterface->AcceptSessionWithUser(pCallback->m_identityRemote);
+    
     std::set<CSteamID> members = getRoomMembers();
     if (members.find(remoteSteamID) != members.end()) {
-        m_pMessagesInterface->AcceptSessionWithUser(pCallback->m_identityRemote);
         std::cout << "[SteamNetworkingManager] Accepted session from room member" << std::endl;
+    } else {
+        std::cout << "[SteamNetworkingManager] Accepted session (user not yet in local member list)" << std::endl;
     }
 }
 

@@ -7,7 +7,7 @@
     "vpn": {
         "virtual_subnet": "10.0.0.0",
         "subnet_mask": "255.0.0.0",
-        "default_mtu": 1400,
+        "default_mtu": 1100,
         "tun_device_name": "SteamVPN"
     },
     "protocol": {

@@ -3,6 +3,7 @@
 #include "config/config_manager.h"
 #include <iostream>
 #include <cstring>
+#include <vector>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -102,6 +103,9 @@ bool SteamVpnBridge::start(const std::string& tunDeviceName,
     // 启动处理线程
     running_ = true;
     tunReadThread_ = std::make_unique<std::thread>(&SteamVpnBridge::tunReadThread, this);
+    
+    // 启动会话维护线程
+    sessionMaintenanceThread_ = std::make_unique<std::thread>(&SteamVpnBridge::sessionMaintenanceThread, this);
 
     std::cout << "Steam VPN bridge started successfully" << std::endl;
     return true;
@@ -120,6 +124,10 @@ void SteamVpnBridge::stop() {
     // 等待线程结束
     if (tunReadThread_ && tunReadThread_->joinable()) {
         tunReadThread_->join();
+    }
+    
+    if (sessionMaintenanceThread_ && sessionMaintenanceThread_->joinable()) {
+        sessionMaintenanceThread_->join();
     }
 
     // 关闭TUN设备
@@ -160,36 +168,39 @@ std::map<uint32_t, RouteEntry> SteamVpnBridge::getRoutingTable() const {
 void SteamVpnBridge::tunReadThread() {
     std::cout << "TUN read thread started" << std::endl;
     
-    // 使用栈上固定大小缓冲区，避免动态分配
-    uint8_t buffer[2048];
+    // 使用合理大小的缓冲区（16KB 足够处理大多数 MTU 配置）
+    // 使用 std::vector 避免栈溢出风险
+    constexpr size_t BUFFER_SIZE = 16384;  // 16KB
+    std::vector<uint8_t> buffer(BUFFER_SIZE);
+    std::vector<uint8_t> vpnPacketBuffer(BUFFER_SIZE + sizeof(VpnMessageHeader) + sizeof(VpnPacketWrapper));
+    
     auto lastTimeoutCheck = std::chrono::steady_clock::now();
     
     while (running_) {
         // 从TUN设备读取数据包
-        int bytesRead = tunDevice_->read(buffer, sizeof(buffer));
+        int bytesRead = tunDevice_->read(buffer.data(), buffer.size());
         
         if (bytesRead > 0) {
             // 提取目标IP
-            uint32_t destIP = extractDestIP(buffer, bytesRead);
+            uint32_t destIP = extractDestIP(buffer.data(), bytesRead);
             
             // 封装VPN消息（包含 Node ID）
-            // 使用栈上缓冲区避免 vector 动态分配
-            uint8_t vpnPacket[2048 + sizeof(VpnMessageHeader) + sizeof(VpnPacketWrapper)];
-            VpnMessageHeader* header = reinterpret_cast<VpnMessageHeader*>(vpnPacket);
+            // 使用预分配的 vpnPacketBuffer 避免每次循环动态分配
+            VpnMessageHeader* header = reinterpret_cast<VpnMessageHeader*>(vpnPacketBuffer.data());
             header->type = VpnMessageType::IP_PACKET;
             
-            VpnPacketWrapper* wrapper = reinterpret_cast<VpnPacketWrapper*>(vpnPacket + sizeof(VpnMessageHeader));
+            VpnPacketWrapper* wrapper = reinterpret_cast<VpnPacketWrapper*>(vpnPacketBuffer.data() + sizeof(VpnMessageHeader));
             wrapper->senderNodeId = ipNegotiator_.getLocalNodeID();
             
             size_t totalPayloadSize = sizeof(VpnPacketWrapper) + bytesRead;
             header->length = htons(static_cast<uint16_t>(totalPayloadSize));
             
-            memcpy(vpnPacket + sizeof(VpnMessageHeader) + sizeof(VpnPacketWrapper), buffer, bytesRead);
+            memcpy(vpnPacketBuffer.data() + sizeof(VpnMessageHeader) + sizeof(VpnPacketWrapper), buffer.data(), bytesRead);
             uint32_t vpnPacketSize = static_cast<uint32_t>(sizeof(VpnMessageHeader) + totalPayloadSize);
 
             if (isBroadcastAddress(destIP)) {
                 // 广播包 - 发送给房间内所有成员
-                steamManager_->broadcastMessage(vpnPacket, vpnPacketSize, 
+                steamManager_->broadcastMessage(vpnPacketBuffer.data(), vpnPacketSize, 
                     k_nSteamNetworkingSend_UnreliableNoNagle | k_nSteamNetworkingSend_NoDelay);
                 
                 auto members = steamManager_->getRoomMembers();
@@ -210,7 +221,7 @@ void SteamVpnBridge::tunReadThread() {
                 }
 
                 if (found) {
-                    steamManager_->sendMessageToUser(targetSteamID, vpnPacket, vpnPacketSize,
+                    steamManager_->sendMessageToUser(targetSteamID, vpnPacketBuffer.data(), vpnPacketSize,
                         k_nSteamNetworkingSend_UnreliableNoNagle | k_nSteamNetworkingSend_NoDelay);
 
                     std::lock_guard<std::mutex> lock(statsMutex_);
@@ -229,6 +240,48 @@ void SteamVpnBridge::tunReadThread() {
     }
     
     std::cout << "TUN read thread stopped" << std::endl;
+}
+
+void SteamVpnBridge::sessionMaintenanceThread() {
+    std::cout << "Session maintenance thread started" << std::endl;
+    
+    // 会话检查间隔（10秒）
+    constexpr int SESSION_CHECK_INTERVAL_MS = 10000;
+    
+    while (running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(SESSION_CHECK_INTERVAL_MS));
+        
+        if (!running_) break;
+        
+        // 获取房间内所有成员
+        auto members = steamManager_->getRoomMembers();
+        CSteamID mySteamID = SteamUser()->GetSteamID();
+        
+        for (const auto& memberID : members) {
+            if (memberID == mySteamID) continue;  // 跳过自己
+            
+            // 检查连接状态
+            if (!steamManager_->isPeerConnected(memberID)) {
+                std::cout << "[SessionMaintenance] Peer " << memberID.ConvertToUint64() 
+                          << " not connected, attempting to reconnect..." << std::endl;
+                
+                // 发送 SESSION_HELLO 重建会话
+                VpnMessageHeader helloMsg;
+                helloMsg.type = VpnMessageType::SESSION_HELLO;
+                helloMsg.length = 0;
+                
+                int flags = k_nSteamNetworkingSend_Reliable | k_nSteamNetworkingSend_AutoRestartBrokenSession;
+                steamManager_->sendMessageToUser(memberID, &helloMsg, sizeof(helloMsg), flags);
+                
+                // 如果本地已经有 IP，发送地址宣布
+                if (ipNegotiator_.getState() == NegotiationState::STABLE) {
+                    ipNegotiator_.sendAddressAnnounceTo(memberID);
+                }
+            }
+        }
+    }
+    
+    std::cout << "Session maintenance thread stopped" << std::endl;
 }
 
 void SteamVpnBridge::handleVpnMessage(const uint8_t* data, size_t length, CSteamID senderSteamID) {

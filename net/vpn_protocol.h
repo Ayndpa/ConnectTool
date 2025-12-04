@@ -13,6 +13,19 @@
 // 这些值可以通过 ConfigManager 在运行时覆盖
 // ============================================================================
 
+// Steam Networking Messages API 消息大小限制
+// Unreliable 消息限制约为 1200 字节，Reliable 消息限制约为 512KB
+// 我们使用 Unreliable 模式发送 IP 数据包以降低延迟
+constexpr size_t STEAM_UNRELIABLE_MSG_SIZE_LIMIT = 1200;
+
+// VPN 消息封装开销
+// VpnMessageHeader (3 bytes) + VpnPacketWrapper (32 bytes NodeID) = 35 bytes
+constexpr size_t VPN_MESSAGE_OVERHEAD = 35;
+
+// 推荐的 MTU 值：Steam 限制 - 封装开销 - 安全余量
+// 1200 - 35 - 65 = 1100 (保留 65 字节安全余量)
+constexpr int RECOMMENDED_MTU = 1100;
+
 // 应用程序私密盐（用于 Node ID 生成）- 默认值
 constexpr const char* APP_SECRET_SALT = "ConnectTool_VPN_Salt_v1";
 

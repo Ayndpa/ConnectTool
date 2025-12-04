@@ -31,7 +31,7 @@ struct AppConfig {
     struct {
         std::string virtual_subnet = "10.0.0.0";
         std::string subnet_mask = "255.0.0.0";
-        int default_mtu = 1400;
+        int default_mtu = 1100;  // 必须小于 Steam unreliable 消息限制(1200) 减去封装开销(35)
         std::string tun_device_name = "SteamVPN";
     } vpn;
 
