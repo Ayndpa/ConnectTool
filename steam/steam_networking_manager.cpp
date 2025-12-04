@@ -235,14 +235,14 @@ std::string SteamNetworkingManager::getPeerConnectionType(CSteamID peerID) const
     
     if (state == k_ESteamNetworkingConnectionState_Connected) {
         if (info.m_nFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) {
-            return "Relay";
+            return "中继";
         } else {
-            return "Direct";
+            return "直连";
         }
     } else if (peerID == SteamUser()->GetSteamID()) {
-        return "Local";
+        return "本机";
     }
-    return "Disconnected";
+    return "挂起";
 }
 
 void SteamNetworkingManager::startMessageHandler()
